@@ -2,41 +2,9 @@ import { Player } from './';
 
 
 
-/*
-Usage:
-
-  const params = {
-    sampleRate<number>,
-    chunkLength<number>,    [seconds]
-    lookahead<number>,      [seconds]
-    latency<number>,        [seconds]
-    playbackSpeed<number>,  [multiplier]
-    scrubSpeed<number>,     [multiplier]
-  };
-
-  new AudioTape();
-  new AudioTape(params<object>);
-  new AudioTape(fileURL<string>[, params<object>]);
-  new AudioTape(fileURLs<array: strings>[, params<object>]);
-
-*/
-
 
 
 export default class AudioTape {
-  set fileURLs(urls) {
-    if (typeof urls === 'string') {
-      this._fileURLs = [urls];
-    } else if (Array.isArray(urls) && urls.every(d => typeof d === 'string')) {
-      this._fileURLs = urls;
-    };
-  };
-
-
-  _parseArgs(args) {
-
-  }
-
   constructor(...args) {
     let _fileURLs,
         _params;
@@ -95,7 +63,13 @@ export default class AudioTape {
 
 
   async load(...files) {
-    await this._Player.load(files);
+    if (!files.length) return null;
+    let urls = files;
+    if (files.length === 1 && Array.isArray(files[0])) {
+      urls = files[0];
+    };
+    if (!urls.every(d => typeof d === 'string')) return null;
+    await this._Player.load(urls);
     return true;
   };
 
