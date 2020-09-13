@@ -1,0 +1,20 @@
+{
+  "name": "audiotape",
+  "version": "0.0.1",
+  "description": "Audio playback engine that simulates analog audio tape and transport functions.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "WebAudio",
+    "audio",
+    "tape"
+  ],
+  "author": "M. Parker Kozak",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mpkozak/audiotape"
+  },
+}
