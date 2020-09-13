@@ -56,7 +56,7 @@ export default class AudioTape {
     this.rew_stop = this._Player.transport.rew_stop;
     this.ff_start = this._Player.transport.ff_start;
     this.ff_stop = this._Player.transport.ff_stop;
-    if (fileURLs.length) {
+    if (!!fileURLs && fileURLs.length) {
       this.load(...fileURLs);
     };
   };
