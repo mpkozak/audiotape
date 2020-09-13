@@ -7,31 +7,6 @@ import { Loader } from './';
 export default class Player {
 
 /* ------------------------------------------------------------------ */
-/* Private fields */
-
-  #ctx;
-  #sampleRate;
-  #rampChunkSamples;
-  #chunkSamples;
-  #chunkSeconds;
-  #totalSamples;
-  #totalChunks;
-  #Loader;
-  #lookaheadSeconds
-  #uiLatency;
-  #playbackSpeeds;
-  #resumeChunk;
-  #scheduleQueue;
-  #transportQueue
-  #playState;
-  #scrubState;
-  #transportDirection;
-  #transportSpeed;
-  #masterGain;
-
-
-
-/* ------------------------------------------------------------------ */
 /* Static Methods */
 
   static calcRampChunkSamples(sampleRate, targetRampChunkSeconds) {
@@ -62,45 +37,45 @@ export default class Player {
 
 
   get active() {
-    return this.#ctx.state === 'running';
+    return this._ctx.state === 'running';
   };
 
   get buffered() {
-    return !!this.#totalSamples;
+    return !!this._totalSamples;
   };
 
   get totalLength() {
-    return this.#totalSamples / this.#sampleRate;
+    return this._totalSamples / this._sampleRate;
   };
 
   get transportBusy() {
-    return (this.#playState === -1) || (this.#scrubState === -1) || !this.#transportDirection;
+    return (this._playState === -1) || (this._scrubState === -1) || !this._transportDirection;
   };
 
   get playing() {
-    return (this.#playState !== 0) || this.transportBusy;
+    return (this._playState !== 0) || this.transportBusy;
   };
 
   get playhead() {
-    const now = this.#ctx.currentTime;
-    const nowChunk = this.#scheduleQueue.find(c => (
+    const now = this._ctx.currentTime;
+    const nowChunk = this._scheduleQueue.find(c => (
       (c.startTime < now) && ((c.startTime + c.playSeconds) > now)
     ));
     if (!nowChunk) {
-      return this.#resumeChunk * this.#chunkSeconds;
+      return this._resumeChunk * this._chunkSeconds;
     };
-    const baseStartTime = nowChunk.id * this.#chunkSeconds;
-    const elapsedTime = this.#ctx.currentTime - nowChunk.startTime;
+    const baseStartTime = nowChunk.id * this._chunkSeconds;
+    const elapsedTime = this._ctx.currentTime - nowChunk.startTime;
     const baseElapsedTime = elapsedTime * nowChunk.node.playbackRate.value;
-    return baseStartTime + (baseElapsedTime * this.#transportDirection);
+    return baseStartTime + (baseElapsedTime * this._transportDirection);
   };
 
   get lookahead() {
-    return this.#lookaheadSeconds;
+    return this._lookaheadSeconds;
   };
 
   get latency() {
-    return this.#uiLatency;
+    return this._uiLatency;
   };
 
 
@@ -109,11 +84,11 @@ export default class Player {
 /* Setters */
 
   set lookahead(seconds) {
-    this.#lookaheadSeconds = this.constructor.clampValidNumber(seconds, 10);
+    this._lookaheadSeconds = this.constructor.clampValidNumber(seconds, 10);
   };
 
   set latency(seconds) {
-    this.#uiLatency = this.constructor.clampValidNumber(seconds, .01);
+    this._uiLatency = this.constructor.clampValidNumber(seconds, .01);
   };
 
 
@@ -129,31 +104,31 @@ export default class Player {
     playbackSpeed = 1,
     scrubSpeed = 5,
   } = {}) {
-    this.#ctx = new AudioContext({ sampleRate });
-    this.#sampleRate = this.#ctx.sampleRate;
-    this.#rampChunkSamples = this.constructor.calcRampChunkSamples(this.#sampleRate, chunkSeconds);
-    this.#chunkSamples = this.#rampChunkSamples * 2;
-    this.#chunkSeconds = this.#chunkSamples / this.#sampleRate;
-    this.#totalSamples = 0;
-    this.#totalChunks = 0;
-    this.#Loader = new Loader(this.#sampleRate, this.#chunkSamples);
-    this.#lookaheadSeconds = this.constructor.clampValidNumber(lookahead, 10);
-    this.#uiLatency = this.constructor.clampValidNumber(latency, .01);
-    this.#playbackSpeeds = {
+    this._ctx = new AudioContext({ sampleRate });
+    this._sampleRate = this._ctx.sampleRate;
+    this._rampChunkSamples = this.constructor.calcRampChunkSamples(this._sampleRate, chunkSeconds);
+    this._chunkSamples = this._rampChunkSamples * 2;
+    this._chunkSeconds = this._chunkSamples / this._sampleRate;
+    this._totalSamples = 0;
+    this._totalChunks = 0;
+    this._Loader = new Loader(this._sampleRate, this._chunkSamples);
+    this._lookaheadSeconds = this.constructor.clampValidNumber(lookahead, 10);
+    this._uiLatency = this.constructor.clampValidNumber(latency, .01);
+    this._playbackSpeeds = {
       min: .01,
       base: playbackSpeed,
       scrub: scrubSpeed,
     };
-    this.#resumeChunk = 0;
-    this.#scheduleQueue = [];
-    this.#transportQueue = [];
-    this.#playState = 0;            /* -1 = pending; 0 = stopped; 1 = playing; */
-    this.#scrubState = 0;           /* -1 = pending; 0 = normal; 1 = ff; */
-    this.#transportDirection = 1;   /* -1 = reverse; 0 = pending; 1 = forward; */
-    this.#transportSpeed = this.#playbackSpeeds.min;
-    this.#masterGain = this.#ctx.createGain();
-    this.#masterGain.connect(this.#ctx.destination);
-    this.#masterGain.gain.value = 1;
+    this._resumeChunk = 0;
+    this._scheduleQueue = [];
+    this._transportQueue = [];
+    this._playState = 0;            /* -1 = pending; 0 = stopped; 1 = playing; */
+    this._scrubState = 0;           /* -1 = pending; 0 = normal; 1 = ff; */
+    this._transportDirection = 1;   /* -1 = reverse; 0 = pending; 1 = forward; */
+    this._transportSpeed = this._playbackSpeeds.min;
+    this._masterGain = this._ctx.createGain();
+    this._masterGain.connect(this._ctx.destination);
+    this._masterGain.gain.value = 1;
     this.checkSchedule = this.checkSchedule.bind(this);
     this.transport = {
       play: this.play.bind(this),
@@ -172,7 +147,7 @@ export default class Player {
 
   activate() {
     if (!this.active) {
-      this.#ctx.resume();
+      this._ctx.resume();
     };
   };
 
@@ -185,12 +160,12 @@ export default class Player {
 
     let pending = undefined;
     try {
-      const loadPromise = this.#Loader.load(filePaths);
+      const loadPromise = this._Loader.load(filePaths);
       if (cb) {
         let p = 0;
         pending = p < 1;
         while(pending === true) {
-          const nextP = this.#Loader.progress;
+          const nextP = this._Loader.progress;
           if (nextP !== p) {
             p = nextP;
             pending = p < 1;
@@ -200,8 +175,8 @@ export default class Player {
           await this.constructor.sleep(32);
         };
       };
-      this.#totalSamples = await loadPromise;
-      this.#totalChunks = this.#totalSamples / this.#chunkSamples;
+      this._totalSamples = await loadPromise;
+      this._totalChunks = this._totalSamples / this._chunkSamples;
       return true;
     } catch (err) {
       console.error(err);
@@ -216,15 +191,15 @@ export default class Player {
 /* Sample data loader interface methods */
 
   getBuffer(chunkIndex) {
-    const startSample = chunkIndex * this.#chunkSamples;
-    const endSample = (chunkIndex + 1) * this.#chunkSamples;
-    const buffer = this.#ctx.createBuffer(2, this.#chunkSamples, this.#sampleRate);
-    if (this.#transportDirection < 0) {
-      buffer.copyToChannel(this.#Loader.getReverseSampleDataByChannel(0, startSample, endSample), 0, 0);
-      buffer.copyToChannel(this.#Loader.getReverseSampleDataByChannel(1, startSample, endSample), 1, 0);
+    const startSample = chunkIndex * this._chunkSamples;
+    const endSample = (chunkIndex + 1) * this._chunkSamples;
+    const buffer = this._ctx.createBuffer(2, this._chunkSamples, this._sampleRate);
+    if (this._transportDirection < 0) {
+      buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(0, startSample, endSample), 0, 0);
+      buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(1, startSample, endSample), 1, 0);
     } else {
-      buffer.copyToChannel(this.#Loader.getSampleDataByChannel(0, startSample, endSample), 0, 0);
-      buffer.copyToChannel(this.#Loader.getSampleDataByChannel(1, startSample, endSample), 1, 0);
+      buffer.copyToChannel(this._Loader.getSampleDataByChannel(0, startSample, endSample), 0, 0);
+      buffer.copyToChannel(this._Loader.getSampleDataByChannel(1, startSample, endSample), 1, 0);
     };
     return buffer;
   };
@@ -245,16 +220,16 @@ export default class Player {
 /* Scheduling methods */
 
   clampClock(time) {
-    const timeSamples = time * this.#sampleRate;
+    const timeSamples = time * this._sampleRate;
     const timeSamplesInt = Math.round(timeSamples);
-    const timeSeconds = timeSamplesInt / this.#sampleRate;
+    const timeSeconds = timeSamplesInt / this._sampleRate;
     return timeSeconds;
   };
 
 
   scheduleChunk(chunk) {
     chunk.node.start(chunk.startTime, 0);
-    this.#scheduleQueue.push(chunk);
+    this._scheduleQueue.push(chunk);
   };
 
 
@@ -262,7 +237,7 @@ export default class Player {
     let nextStartTime = this.clampClock(start);
     chunks.forEach(chunk => {
       chunk.startTime = nextStartTime;
-      chunk.playSeconds = (chunk.node.buffer.length / this.#sampleRate) / chunk.node.playbackRate.value;
+      chunk.playSeconds = (chunk.node.buffer.length / this._sampleRate) / chunk.node.playbackRate.value;
       nextStartTime += chunk.playSeconds;
       void this.scheduleChunk(chunk);
     });
@@ -270,22 +245,22 @@ export default class Player {
 
 
   cancelChunksAfter(startTime) {
-    this.#scheduleQueue.forEach((q, qi) => {
+    this._scheduleQueue.forEach((q, qi) => {
       q.node.onended = null;
       if (q.startTime >= startTime) {
-        q.node.disconnect(this.#masterGain);
+        q.node.disconnect(this._masterGain);
         q.node.stop();
       };
     });
-    const spliceIndexStart = this.#scheduleQueue
+    const spliceIndexStart = this._scheduleQueue
       .findIndex(q => q.startTime >= startTime);
-    this.#scheduleQueue.splice(spliceIndexStart);
+    this._scheduleQueue.splice(spliceIndexStart);
   };
 
 
   refillQueue() {
-    const endTime = this.#ctx.currentTime + this.lookahead;
-    let lastChunk = this.#scheduleQueue[this.#scheduleQueue.length - 1];
+    const endTime = this._ctx.currentTime + this.lookahead;
+    let lastChunk = this._scheduleQueue[this._scheduleQueue.length - 1];
     if (!lastChunk) {
       // console.warn('REFILL QUEUE --- no last chunk');
       return null;
@@ -293,13 +268,13 @@ export default class Player {
 
     while (lastChunk.startTime < endTime) {
       const nextStartTime = lastChunk.startTime + lastChunk.playSeconds;
-      let nextChunkIndex = lastChunk.id + this.#transportDirection;
+      let nextChunkIndex = lastChunk.id + this._transportDirection;
       if (Math.floor(nextChunkIndex) !== nextChunkIndex) {
         const lastSampleLength = lastChunk.node.buffer.length;
-        const nextSampleStart = lastChunk.startSample + (lastSampleLength * this.#transportDirection);
-        nextChunkIndex = nextSampleStart / this.#chunkSamples;
+        const nextSampleStart = lastChunk.startSample + (lastSampleLength * this._transportDirection);
+        nextChunkIndex = nextSampleStart / this._chunkSamples;
       };
-      if (nextChunkIndex >= this.#totalChunks) {
+      if (nextChunkIndex >= this._totalChunks) {
         // console.warn('REFILL QUEUE --- next chunk after range')
         return null;
       };
@@ -309,9 +284,9 @@ export default class Player {
       };
       const nextChunk = this.getChunk(nextChunkIndex);
       nextChunk.startTime = nextStartTime;
-      nextChunk.playSeconds = (nextChunk.node.buffer.length / this.#sampleRate) / nextChunk.node.playbackRate.value;
+      nextChunk.playSeconds = (nextChunk.node.buffer.length / this._sampleRate) / nextChunk.node.playbackRate.value;
       void this.scheduleChunk(nextChunk);
-      lastChunk = this.#scheduleQueue[this.#scheduleQueue.length - 1];
+      lastChunk = this._scheduleQueue[this._scheduleQueue.length - 1];
     };
   };
 
@@ -319,26 +294,26 @@ export default class Player {
   checkSchedule(e) {
     e.target.removeEventListener('ended', this.checkSchedule);
 
-    if (this.#scheduleQueue.length < 2) {
+    if (this._scheduleQueue.length < 2) {
       // console.warn('CHECK SCHEDULE --- not enough in queue');
-      const lastChunk = this.#scheduleQueue[0];
+      const lastChunk = this._scheduleQueue[0];
       if (lastChunk) {
         // console.log('setting resume chunk', lastChunk)
-        this.#resumeChunk = lastChunk.id;
-        this.#scheduleQueue.splice(0);
-        this.#playState = 0;
+        this._resumeChunk = lastChunk.id;
+        this._scheduleQueue.splice(0);
+        this._playState = 0;
       };
       return null;
     };
 
-    const now = this.#ctx.currentTime;
-    let nextStartTime = this.#scheduleQueue[1].startTime;
+    const now = this._ctx.currentTime;
+    let nextStartTime = this._scheduleQueue[1].startTime;
     while (nextStartTime < now) {
-      // this.#scheduleQueue[0].node.onended = null;
-      this.#scheduleQueue[0].node.removeEventListener('ended', this.checkSchedule);
-      this.#scheduleQueue.shift();
-      if (this.#scheduleQueue.length < 2) break;
-      nextStartTime = this.#scheduleQueue[1].startTime;
+      // this._scheduleQueue[0].node.onended = null;
+      this._scheduleQueue[0].node.removeEventListener('ended', this.checkSchedule);
+      this._scheduleQueue.shift();
+      if (this._scheduleQueue.length < 2) break;
+      nextStartTime = this._scheduleQueue[1].startTime;
     };
 
     if (this.transportBusy) {
@@ -346,7 +321,7 @@ export default class Player {
       return null;
     };
 
-    if (this.#playState === 0) {
+    if (this._playState === 0) {
       // console.log('CHECK SCHEDULE --- transport is stopped');
       return null;
     };
@@ -362,13 +337,13 @@ export default class Player {
   getChunk(chunkIndex) {
     const chunk = {
       id: chunkIndex,
-      node: this.#ctx.createBufferSource(),
-      startSample: chunkIndex * this.#chunkSamples,
+      node: this._ctx.createBufferSource(),
+      startSample: chunkIndex * this._chunkSamples,
     };
     chunk.node.buffer = this.getBuffer(chunkIndex);
-    chunk.node.playbackRate.value = this.#transportSpeed;
+    chunk.node.playbackRate.value = this._transportSpeed;
     chunk.node.onended = this.checkSchedule;
-    chunk.node.connect(this.#masterGain);
+    chunk.node.connect(this._masterGain);
     return chunk;
   };
 
@@ -386,15 +361,15 @@ export default class Player {
 
 
   calcRampParams(startSpeed, endSpeed, lengthSeconds) {
-    const lengthSamples = lengthSeconds * this.#sampleRate;
-    const lengthRampChunks = Math.floor(lengthSamples / this.#rampChunkSamples);
+    const lengthSamples = lengthSeconds * this._sampleRate;
+    const lengthRampChunks = Math.floor(lengthSamples / this._rampChunkSamples);
     const speedRange = endSpeed - startSpeed;
     const speedStep = speedRange / lengthRampChunks;
     const rampChunkParams = new Array(lengthRampChunks).fill()
       .map((d, i) => {
         const speedApprox = startSpeed + (i * speedStep);
-        const lengthSrcSamples = Math.round(this.#rampChunkSamples * speedApprox);
-        const speed = lengthSrcSamples / this.#rampChunkSamples;
+        const lengthSrcSamples = Math.round(this._rampChunkSamples * speedApprox);
+        const speed = lengthSrcSamples / this._rampChunkSamples;
         return {
           lengthSrcSamples,
           speed,
@@ -402,8 +377,8 @@ export default class Player {
       });
     const lengthSrcSamples = rampChunkParams
       .reduce((acc, d) => acc += d.lengthSrcSamples, 0);
-    const lengthChunks = Math.ceil(lengthSrcSamples / this.#chunkSamples);
-    const lengthTotalSamples = lengthChunks * this.#chunkSamples;
+    const lengthChunks = Math.ceil(lengthSrcSamples / this._chunkSamples);
+    const lengthTotalSamples = lengthChunks * this._chunkSamples;
     const overflowSamples = lengthTotalSamples - lengthSrcSamples;
     if (overflowSamples < 0) {
       // console.warn('CALC RAMP PARAMS --- sample calc underrun');
@@ -414,7 +389,7 @@ export default class Player {
         speed: endSpeed,
       });
     };
-    const durationSeconds = (lengthRampChunks *  this.#rampChunkSamples) / this.#sampleRate;
+    const durationSeconds = (lengthRampChunks *  this._rampChunkSamples) / this._sampleRate;
     return {
       rampChunkParams,
       lengthChunks,
@@ -426,12 +401,12 @@ export default class Player {
   genRampChunks(startChunkIndex, rampParams, reverse = false) {
     const { rampChunkParams, lengthChunks, durationSeconds } = rampParams;
     const endChunkIndex = startChunkIndex + (reverse ? -lengthChunks : lengthChunks);
-    const rampStartSample = startChunkIndex * this.#chunkSamples;
-    if (rampStartSample < 0 || rampStartSample >= this.#totalSamples) {
+    const rampStartSample = startChunkIndex * this._chunkSamples;
+    if (rampStartSample < 0 || rampStartSample >= this._totalSamples) {
       // console.warn('GEN RAMP CHUNKS --- start out of bounds');
     };
-    const rampEndSample = endChunkIndex * this.#chunkSamples;
-    if (rampEndSample < 0 || rampEndSample >= this.#totalSamples) {
+    const rampEndSample = endChunkIndex * this._chunkSamples;
+    if (rampEndSample < 0 || rampEndSample >= this._totalSamples) {
       // console.warn('GEN RAMP CHUNKS --- end out of bounds');
     };
     let nextStartSample = rampStartSample;
@@ -443,21 +418,21 @@ export default class Player {
         nextStartSample += r.lengthSrcSamples;
       };
       const chunk = {
-        id: startSample / this.#chunkSamples,
-        node: this.#ctx.createBufferSource(),
+        id: startSample / this._chunkSamples,
+        node: this._ctx.createBufferSource(),
         startSample: startSample,
       };
-      chunk.node.buffer = this.#ctx.createBuffer(2, r.lengthSrcSamples, this.#sampleRate);
+      chunk.node.buffer = this._ctx.createBuffer(2, r.lengthSrcSamples, this._sampleRate);
       if (reverse) {
-        chunk.node.buffer.copyToChannel(this.#Loader.getReverseSampleDataByChannel(0, nextStartSample, startSample), 0, 0);
-        chunk.node.buffer.copyToChannel(this.#Loader.getReverseSampleDataByChannel(1, nextStartSample, startSample), 1, 0);
+        chunk.node.buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(0, nextStartSample, startSample), 0, 0);
+        chunk.node.buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(1, nextStartSample, startSample), 1, 0);
       } else {
-        chunk.node.buffer.copyToChannel(this.#Loader.getSampleDataByChannel(0, startSample, nextStartSample), 0, 0);
-        chunk.node.buffer.copyToChannel(this.#Loader.getSampleDataByChannel(1, startSample, nextStartSample), 1, 0);
+        chunk.node.buffer.copyToChannel(this._Loader.getSampleDataByChannel(0, startSample, nextStartSample), 0, 0);
+        chunk.node.buffer.copyToChannel(this._Loader.getSampleDataByChannel(1, startSample, nextStartSample), 1, 0);
       };
       chunk.node.playbackRate.value = r.speed;
       chunk.node.onended = this.checkSchedule;
-      chunk.node.connect(this.#masterGain);
+      chunk.node.connect(this._masterGain);
       return chunk;
     });
     if (nextStartSample !== rampEndSample) {
@@ -477,7 +452,7 @@ export default class Player {
 /* Audio methods */
 
   rampGainAtTime(val, startTime, endTime, cancel = true) {
-    const node = this.#masterGain.gain;
+    const node = this._masterGain.gain;
     if (cancel) {
       node.cancelScheduledValues(startTime);
       const nowVal = node.value;
@@ -500,12 +475,12 @@ export default class Player {
 
 
   getNextSafeChunk(targetTime) {
-    const minTimeTarget = targetTime || this.#ctx.currentTime + this.#uiLatency;
-    const reqdChunks = this.#scheduleQueue.filter(c => c.REQD === true);
+    const minTimeTarget = targetTime || this._ctx.currentTime + this._uiLatency;
+    const reqdChunks = this._scheduleQueue.filter(c => c.REQD === true);
     const minReqdTargetTime = (reqdChunks.length)
       ? reqdChunks[reqdChunks.length - 1]
       : minTimeTarget;
-    const chunk = this.#scheduleQueue.find(c => c.startTime >= minReqdTargetTime);
+    const chunk = this._scheduleQueue.find(c => c.startTime >= minReqdTargetTime);
     if (!chunk) return null;
     return chunk;
   };
@@ -525,47 +500,47 @@ export default class Player {
     if (this.transportBusy) {
       await this.waitForTransport();
     };
-    if (this.#transportQueue.length) {
-      this.#transportQueue.splice(1);
+    if (this._transportQueue.length) {
+      this._transportQueue.splice(1);
     } else {
       return null;
     };
-    this.deltaTransport(this.#transportQueue.pop());
+    this.deltaTransport(this._transportQueue.pop());
   };
 
 
   async deltaTransport({ playState, scrubState, transportDirection, id } = {}) {
-    const oldPlayState = this.#playState;
-    const oldScrubState = this.#scrubState;
-    const oldTransportDirection = this.#transportDirection;
+    const oldPlayState = this._playState;
+    const oldScrubState = this._scrubState;
+    const oldTransportDirection = this._transportDirection;
     let newPlayState;
     let newScrubState;
     let newTransportDirection;
     if ((playState !== undefined) && (playState !== oldPlayState)) {
       newPlayState = playState;
-      this.#playState = -1;
+      this._playState = -1;
     };
     if ((scrubState !== undefined) && (scrubState !== oldScrubState)) {
       newScrubState = scrubState;
-      this.#scrubState = -1;
+      this._scrubState = -1;
     };
     if ((transportDirection !== undefined) && (transportDirection !== oldTransportDirection)) {
       newTransportDirection = transportDirection;
-      this.#transportDirection = 0;
+      this._transportDirection = 0;
     };
     if (!this.transportBusy) return null;
 
     let startChunkIndex,
         startTime,
         startSpeed,
-        endSpeed = this.#playbackSpeeds.base,
+        endSpeed = this._playbackSpeeds.base,
         endGain = 1;
 
     const nextSafeChunk = this.getNextSafeChunk();
     if (!nextSafeChunk) {
-      startChunkIndex = this.#resumeChunk;
-      startTime = this.clampClock(this.#ctx.currentTime + this.#uiLatency);
-      startSpeed = this.#playbackSpeeds.min;
+      startChunkIndex = this._resumeChunk;
+      startTime = this.clampClock(this._ctx.currentTime + this._uiLatency);
+      startSpeed = this._playbackSpeeds.min;
     } else {
       startChunkIndex = nextSafeChunk.id;
       startTime = nextSafeChunk.startTime;
@@ -575,13 +550,13 @@ export default class Player {
 
     if (newPlayState !== undefined) {
       if (newPlayState === 0) {
-        endSpeed = this.#playbackSpeeds.min;
+        endSpeed = this._playbackSpeeds.min;
         endGain = 0;
       };
     };
     if (newScrubState !== undefined) {
       if (newScrubState === 1) {
-        endSpeed = this.#playbackSpeeds.scrub;
+        endSpeed = this._playbackSpeeds.scrub;
       };
     };
 
@@ -606,13 +581,13 @@ export default class Player {
     if (newTransportDirection !== undefined) {
       let turnaroundChunkIndex = startChunkIndex;
 
-      if (startSpeed > this.#playbackSpeeds.min) { // was already playing, need to ramp down
+      if (startSpeed > this._playbackSpeeds.min) { // was already playing, need to ramp down
         let speedRampDown;
-        const speedRampDownLengthSeconds = this.calcSpeedRampDuration(startSpeed, this.#playbackSpeeds.min)
+        const speedRampDownLengthSeconds = this.calcSpeedRampDuration(startSpeed, this._playbackSpeeds.min)
         if (newTransportDirection === 1) {
-          speedRampDown = this.getReverseSpeedRampChunks(startChunkIndex, speedRampDownLengthSeconds, startSpeed, this.#playbackSpeeds.min);
+          speedRampDown = this.getReverseSpeedRampChunks(startChunkIndex, speedRampDownLengthSeconds, startSpeed, this._playbackSpeeds.min);
         } else if (newTransportDirection === -1) {
-          speedRampDown = this.getSpeedRampChunks(startChunkIndex, speedRampDownLengthSeconds, startSpeed, this.#playbackSpeeds.min);
+          speedRampDown = this.getSpeedRampChunks(startChunkIndex, speedRampDownLengthSeconds, startSpeed, this._playbackSpeeds.min);
         };
         turnaroundChunkIndex = speedRampDown.rampChunks.pop().id;
         speedRampChunks.push(...speedRampDown.rampChunks);
@@ -625,11 +600,11 @@ export default class Player {
       };
 
       let speedRampUp;
-      const speedRampUpLengthSeconds = this.calcSpeedRampDuration(this.#playbackSpeeds.min, endSpeed);
+      const speedRampUpLengthSeconds = this.calcSpeedRampDuration(this._playbackSpeeds.min, endSpeed);
       if (newTransportDirection === 1) {
-        speedRampUp = this.getSpeedRampChunks(turnaroundChunkIndex, speedRampUpLengthSeconds, this.#playbackSpeeds.min, endSpeed);
+        speedRampUp = this.getSpeedRampChunks(turnaroundChunkIndex, speedRampUpLengthSeconds, this._playbackSpeeds.min, endSpeed);
       } else if (newTransportDirection === -1) {
-        speedRampUp = this.getReverseSpeedRampChunks(turnaroundChunkIndex, speedRampUpLengthSeconds, this.#playbackSpeeds.min, endSpeed);
+        speedRampUp = this.getReverseSpeedRampChunks(turnaroundChunkIndex, speedRampUpLengthSeconds, this._playbackSpeeds.min, endSpeed);
       };
       endChunkIndex = speedRampUp.endChunkIndex;
       speedRampChunks.push(...speedRampUp.rampChunks);
@@ -638,29 +613,29 @@ export default class Player {
       const gainRampUpStart = gainRampUpEnd - gainRampUpLengthSeconds;
       void this.rampGainAtTime(endGain, gainRampUpStart, gainRampUpEnd, false);
 
-      this.#transportDirection = newTransportDirection;
+      this._transportDirection = newTransportDirection;
     };
 
     void this.scheduleChunks(speedRampChunks, startTime);
 
-    this.#transportSpeed = endSpeed;
+    this._transportSpeed = endSpeed;
 
     if (newPlayState === 0) {
-      this.#resumeChunk = endChunkIndex;
+      this._resumeChunk = endChunkIndex;
     } else {
       void this.refillQueue();
     };
 
-    while (this.#ctx.currentTime < zeroTime) {
+    while (this._ctx.currentTime < zeroTime) {
       await this.constructor.sleep(32);
     };
 
-    if (this.#playState < 0) {
-      this.#playState = newPlayState;
+    if (this._playState < 0) {
+      this._playState = newPlayState;
     };
 
-    if (this.#scrubState < 0) {
-      this.#scrubState = newScrubState;
+    if (this._scrubState < 0) {
+      this._scrubState = newScrubState;
     };
   };
 
@@ -670,7 +645,7 @@ export default class Player {
 /* Transport public methods */
 
   async play() {
-    this.#transportQueue.push({
+    this._transportQueue.push({
       playState: 1,
       scrubState: 0,
       transportDirection: 1,
@@ -680,7 +655,7 @@ export default class Player {
   };
 
   async stop() {
-    this.#transportQueue.push({
+    this._transportQueue.push({
       playState: 0,
       scrubState: 0,
       transportDirection: 1,
@@ -690,7 +665,7 @@ export default class Player {
   };
 
   async rew_start() {
-    this.#transportQueue.push({
+    this._transportQueue.push({
       playState: 1,
       scrubState: 1,
       transportDirection: -1,
@@ -700,7 +675,7 @@ export default class Player {
   };
 
   async rew_stop() {
-    this.#transportQueue.push({
+    this._transportQueue.push({
       playState: 1,
       scrubState: 0,
       transportDirection: 1,
@@ -710,7 +685,7 @@ export default class Player {
   };
 
   async ff_start() {
-    this.#transportQueue.push({
+    this._transportQueue.push({
       playState: 1,
       scrubState: 1,
       transportDirection: 1,
@@ -720,7 +695,7 @@ export default class Player {
   };
 
   async ff_stop() {
-    this.#transportQueue.push({
+    this._transportQueue.push({
       playState: 1,
       scrubState: 0,
       transportDirection: 1,
