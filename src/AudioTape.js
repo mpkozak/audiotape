@@ -39,7 +39,7 @@ export default class AudioTape {
         throw new Error('Invalid constructor arguments');
     };
     const fileURLs = _fileURLs;
-    const params = _params;
+    const params = _params || {};
     this._Player = new Player({
       sampleRate: params.sampleRate || 48e3,
       chunkSeconds: params.chunkLength || .02,
