@@ -1,105 +1,114 @@
 export default class Loader {
 
 /* ------------------------------------------------------------------ */
-/* Static Methods */
-
-  static reverseSamples(typedArr) {
-    return Float32Array.from(typedArr).reverse();
-  };
-
-
-
-/* ------------------------------------------------------------------ */
-/* Getters */
-
-  get progress() {
-    let prog = 0;
-    if (this._filesTotal) {
-      const files = (this._progFiles / this._filesTotal);
-      prog += (files * .8);
-    };
-    if (this._samplesTotal) {
-      const buffers = (this._progSamples / this._samplesTotal);
-      prog += (buffers * .2);
-    };
-    return prog;
-  };
-
-
-
-/* ------------------------------------------------------------------ */
 /* Constructor */
 
-  constructor(sampleRate = 48e3, chunkSamples = 2048) {
-    this._ctx = new OfflineAudioContext(2, chunkSamples * 100, sampleRate);
-    this._chunkSamples = chunkSamples;
-    this._buf = [];
-    this._filesTotal = 0;
-    this._samplesTotal = 0;
-    this._progFiles = 0;
-    this._progSamples = 0;
-    this.load = this.load.bind(this);
-    this.getSampleDataByChannel = this.getSampleDataByChannel.bind(this);
-    this.getReverseSampleDataByChannel = this.getReverseSampleDataByChannel.bind(this);
+  constructor(sampleRate = 48e3) {
+    // AudioContext
+    this._ctx = new OfflineAudioContext(2, sampleRate, sampleRate);
+    // Audio data
+    this._chunkData = [];
+    // Public methods
+    this.load = this._load.bind(this);
+    this.getSampleDataByChannel = this._getSampleDataByChannel.bind(this);
+    this.getReverseSampleDataByChannel = this._getReverseSampleDataByChannel.bind(this);
   };
 
 
 
 /* ------------------------------------------------------------------ */
-/* Public methods */
+/* Public Sample Data Methods */
 
-  getSampleDataByChannel(channel = 0, startSample, endSample) {
-    return this._buf[channel].subarray(startSample, endSample);
+  _getSampleDataByChannel(channel = 0, startSample, endSample) {
+    const outputArray = new Float32Array(endSample - startSample);
+    const startChunkIndex = this._chunkData
+      .findIndex(c => c.endSample >= startSample);
+    const startChunk = this._chunkData[startChunkIndex];
+    const subArray = startChunk.data[channel]
+      .subarray(
+        startSample - startChunk.startSample,
+        endSample - startChunk.startSample
+      );
+    outputArray.set(subArray, 0);
+    if (subArray.length < outputArray.length) {   // requested samples span multiple chunks
+      const overflowSamples = outputArray.length - subArray.length;
+      const nextChunk = this._chunkData[startChunkIndex + 1];
+      const nextSubArray = nextChunk.data[channel]
+        .subarray(0, overflowSamples);
+      outputArray.set(nextSubArray, subArray.length);
+    };
+    return outputArray;
   };
 
-  getReverseSampleDataByChannel(channel = 0, startSample, endSample) {
-    return this.constructor.reverseSamples(
-      this._buf[channel].subarray(startSample, endSample)
+
+  _getReverseSampleDataByChannel(channel = 0, startSample, endSample) {
+    return this._getSampleDataByChannel(channel, startSample, endSample).reverse();
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Public Load Method + Helpers */
+
+  async _load(files = [], loadCb = null) {
+    const progressCb = this._load_genProgressCb(files.length, loadCb);
+    const audioBuffers = await this._load_fetchAllBuffers(files, progressCb);
+    const samplesTotal = this._load_populateChunkData(audioBuffers, progressCb);
+    return samplesTotal;
+  };
+
+
+  _load_populateChunkData(audioBuffers, progressCb) {
+    let currentSample = 0;
+    for (let i in audioBuffers) {
+      const currentBuffer = audioBuffers[i];
+      this._chunkData[i] = {
+        length: currentBuffer.length,
+        data: [
+          currentBuffer.getChannelData(0),
+          currentBuffer.getChannelData(1),
+        ],
+        startSample: currentSample,
+      };
+      currentSample += currentBuffer.length;
+      this._chunkData[i].endSample = currentSample;
+      progressCb();
+    };
+    return currentSample;
+  };
+
+
+  async _load_fetchAllBuffers(urls = [], progressCb) {
+    const buffers = await Promise.all(
+      urls.map(url => this._load_fetchBuffer(url, progressCb))
     );
+    return buffers.filter(b => b !== null);
   };
 
 
-
-/* ------------------------------------------------------------------ */
-/* Initialization methods */
-
-  async load(tracks = []) {
-    this._filesTotal = tracks.length;
-
-    const buffersPromise = tracks.map(t => this.loadFile(t));
-    const buffers = await Promise.all(buffersPromise);
-
-    this._buf[0] = new Float32Array(this._samplesTotal);
-    this._buf[1] = new Float32Array(this._samplesTotal);
-
-    let lastIndex = 0;
-    buffers.forEach(b => {
-      const startIndex = lastIndex;
-      lastIndex += b.length;
-      b.copyFromChannel(this._buf[0].subarray(startIndex, lastIndex), 0, 0);
-      b.copyFromChannel(this._buf[1].subarray(startIndex, lastIndex), 1, 0);
-      this._progSamples += b.length;
-    });
-
-    return this._samplesTotal;
-  };
-
-
-
-/* ------------------------------------------------------------------ */
-/* Initialization helper methods */
-
-  async loadFile(filePath = '') {
+  async _load_fetchBuffer(url = '', progressCb) {
     try {
-      const res = await fetch(filePath);
+      const res = await fetch(url);
       const arrayBuffer = await res.arrayBuffer();
       const audioBuffer = await this._ctx.decodeAudioData(arrayBuffer);
-      this._progFiles += 1;
-      this._samplesTotal += audioBuffer.length;
+      progressCb();
       return audioBuffer;
     } catch (err) {
-      console.error('loadFile error', err);
+      console.error('_load_fetchBuffer error', err);
       return null;
+    };
+  };
+
+
+  _load_genProgressCb(totalFiles = 0, cb = null) {
+    const loadProgressTotal = totalFiles * 2;
+    let loadProgress = 0;
+    const progressTickCb = typeof cb === 'function' ? cb : null;
+    return () => {
+      loadProgress++;
+      if (progressTickCb) {
+        progressTickCb(loadProgress / loadProgressTotal);
+      };
     };
   };
 

@@ -1,33 +1,89 @@
-import { Loader } from './';
-
-
-
-
-
 export default class Player {
+
+/* ------------------------------------------------------------------ */
+/* Static Properties */
+
+  // default constructor argument parameter values
+  static DEFAULT_SAMPLE_RATE = 48e3;
+  static DEFAULT_CHUNK_LENGTH = .02;
+  static DEFAULT_LOOKAHEAD = 5;
+  static DEFAULT_LATENCY = .1;
+  static DEFAULT_PLAYBACK_SPEED = 1;
+  static DEFAULT_SCRUB_SPEED = 5;
+
+  // minimum parameter values
+  static MIN_LOOKAHEAD_SECONDS = 1;
+  static MIN_SCHEDULED_SECONDS = .1;
+  static MIN_PLAYBACK_SPEED = .1;
+
+  // chunk sample size constants
+  static KBIN_SAMPLES = 128;
+  static MIN_RAMP_CHUNK_KBINS = 4;
+
+  // pre-defined parameter objects for transport state changes
+  static TRANSPORT = {
+    play: {
+      playing: 1,
+      scrubbing: 0,
+      direction: 1,
+    },
+    stop: {
+      playing: 0,
+      scrubbing: 0,
+      direction: 1,
+    },
+    rev: {
+      playing: 1,
+      scrubbing: 0,
+      direction: -1,
+    },
+    ff: {
+      playing: 1,
+      scrubbing: 1,
+      direction: 1,
+    },
+    rew: {
+      playing: 1,
+      scrubbing: 1,
+      direction: -1,
+    },
+  };
+
+
 
 /* ------------------------------------------------------------------ */
 /* Static Methods */
 
   static calcRampChunkSamples(sampleRate, targetRampChunkSeconds) {
-    const kBinSamples = 128;
-    const minRampChunkKBins = 4;
     const targetRampChunkSamples = Math.floor(sampleRate * targetRampChunkSeconds);
-    const targetRampChunkKBins = Math.round(targetRampChunkSamples / kBinSamples);
-    const rampChunkKBins = Math.max(minRampChunkKBins, targetRampChunkKBins);
-    const rampChunkSamples = rampChunkKBins * kBinSamples;
+    const targetRampChunkKBins = Math.round(targetRampChunkSamples / this.KBIN_SAMPLES);
+    const rampChunkKBins = Math.max(this.MIN_RAMP_CHUNK_KBINS, targetRampChunkKBins);
+    const rampChunkSamples = (rampChunkKBins * this.KBIN_SAMPLES);
     return rampChunkSamples;
   };
 
-  static sleep(ms) {
-    return new Promise(res => setTimeout(res, ms));
-  };
-
-  static clampValidNumber(val, minVal) {
+  static clampMinValidNumber(val, minVal) {
     if (typeof val === 'number' && val >= minVal) {
       return val;
     };
     return minVal;
+  };
+
+  static calcRampDuration(startSpeed, endSpeed) {
+    return Math.sqrt(Math.abs(startSpeed - endSpeed));
+  };
+
+  static parseLoadSrc(src) {
+    if (Array.isArray(src)) {
+      if (!src.every(url => typeof url === 'string')) {
+        throw new TypeError('Source URLs must be strings');
+      };
+      return src;
+    };
+    if (typeof src === 'string') {
+      return [src];
+    };
+    return [];
   };
 
 
@@ -35,39 +91,28 @@ export default class Player {
 /* ------------------------------------------------------------------ */
 /* Getters */
 
+  get sampleRate() {
+    return this._sampleRate;
+  };
 
   get active() {
-    return this._ctx.state === 'running';
+    return this._ctxActive && this._engineActive;
   };
 
-  get buffered() {
-    return !!this._totalSamples;
-  };
-
-  get totalLength() {
-    return this._totalSamples / this._sampleRate;
-  };
-
-  get transportBusy() {
-    return (this._playState === -1) || (this._scrubState === -1) || !this._transportDirection;
-  };
-
-  get playing() {
-    return (this._playState !== 0) || this.transportBusy;
+  get totalSeconds() {
+    return this._totalSeconds;
   };
 
   get playhead() {
-    const now = this._ctx.currentTime;
-    const nowChunk = this._scheduleQueue.find(c => (
-      (c.startTime < now) && ((c.startTime + c.playSeconds) > now)
-    ));
-    if (!nowChunk) {
-      return this._resumeChunk * this._chunkSeconds;
+    if (!this._scheduledQueue.length) {
+      return this._state.resumeSample / this._sampleRate;
     };
-    const baseStartTime = nowChunk.id * this._chunkSeconds;
-    const elapsedTime = this._ctx.currentTime - nowChunk.startTime;
-    const baseElapsedTime = elapsedTime * nowChunk.node.playbackRate.value;
-    return baseStartTime + (baseElapsedTime * this._transportDirection);
+    const nowChunk = this._scheduledQueue[0];
+    const elapsedSeconds = (
+      (this._ctx.currentTime - nowChunk.ctxStartTime)
+      * (nowChunk.ctxPlaybackSpeed * nowChunk.direction)
+    );
+    return nowChunk.srcStartSeconds + elapsedSeconds;
   };
 
   get lookahead() {
@@ -75,7 +120,40 @@ export default class Player {
   };
 
   get latency() {
-    return this._uiLatency;
+    return this._scheduledSeconds;
+  };
+
+  get playbackSpeed() {
+    return this._playbackSpeeds.base;
+  };
+
+  get scrubSpeed() {
+    return this._playbackSpeeds.scrub;
+  };
+
+  get volume() {
+    return this._masterGain.gain.value;
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Private Getters */
+
+  get _ctxActive() {
+    return this._ctx.state === 'running';
+  };
+
+  get _engineActive() {
+    return !!this._tickTimeout;
+  };
+
+  get _lastScheduledChunk() {
+    return this._scheduledQueue[this._scheduledQueue.length - 1];
+  };
+
+  get _gainNode() {
+    return this._masterGain;
   };
 
 
@@ -84,11 +162,46 @@ export default class Player {
 /* Setters */
 
   set lookahead(seconds) {
-    this._lookaheadSeconds = this.constructor.clampValidNumber(seconds, 10);
+    this._lookaheadSeconds = this.constructor.clampMinValidNumber(seconds, this.constructor.MIN_LOOKAHEAD_SECONDS);
+    this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
   };
 
   set latency(seconds) {
-    this._uiLatency = this.constructor.clampValidNumber(seconds, .01);
+    this._scheduledSeconds = this.constructor.clampMinValidNumber(seconds, this.constructor.MIN_SCHEDULED_SECONDS);
+    this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
+    this._uiLatency = (this._scheduledSeconds / 5);
+  };
+
+  set playbackSpeed(speed) {
+    this._playbackSpeeds.base = this._clampSpeed(speed);
+    if (!this._state.busy && !this._state.scrubbing && this._state.playing) {
+      if (this._state.direction === 1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.play});
+      };
+      if (this._state.direction === -1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.rev});
+      };
+    };
+  };
+
+  set scrubSpeed(speed) {
+    this._playbackSpeeds.scrub = this._clampSpeed(speed);
+    if (!this._state.busy && this._state.scrubbing && this._state.playing) {
+      if (this._state.direction === 1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.ff});
+      };
+      if (this._state.direction === -1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.rew});
+      };
+    };
+  };
+
+  set volume(val) {
+    const safeVal = this.constructor.clampMinValidNumber(val, 0);
+    const now = this._ctx.currentTime;
+    const rampEnd = now + this._uiLatency;
+    this._masterGain.gain.cancelScheduledValues(now);
+    this._masterGain.gain.linearRampToValueAtTime(safeVal, rampEnd);
   };
 
 
@@ -97,612 +210,512 @@ export default class Player {
 /* Constructor */
 
   constructor({
-    sampleRate = 48e3,
-    chunkSeconds = .02,
-    lookahead = 2,
-    latency = .1,
-    playbackSpeed = 1,
-    scrubSpeed = 5,
+    /* fixed at instantiation */
+    sampleRate = this.constructor.DEFAULT_SAMPLE_RATE,
+    chunkLength = this.constructor.DEFAULT_CHUNK_LENGTH,
+    /* can change via setters */
+    lookahead = this.constructor.DEFAULT_LOOKAHEAD,
+    latency = this.constructor.DEFAULT_LATENCY,
+    playbackSpeed = this.constructor.DEFAULT_PLAYBACK_SPEED,
+    scrubSpeed = this.constructor.DEFAULT_SCRUB_SPEED,
+    Loader,
   } = {}) {
+    // AudioContext
     this._ctx = new AudioContext({ sampleRate });
-    this._sampleRate = this._ctx.sampleRate;
-    this._rampChunkSamples = this.constructor.calcRampChunkSamples(this._sampleRate, chunkSeconds);
-    this._chunkSamples = this._rampChunkSamples * 2;
-    this._chunkSeconds = this._chunkSamples / this._sampleRate;
-    this._totalSamples = 0;
-    this._totalChunks = 0;
-    this._Loader = new Loader(this._sampleRate, this._chunkSamples);
-    this._lookaheadSeconds = this.constructor.clampValidNumber(lookahead, 10);
-    this._uiLatency = this.constructor.clampValidNumber(latency, .01);
-    this._playbackSpeeds = {
-      min: .01,
-      base: playbackSpeed,
-      scrub: scrubSpeed,
-    };
-    this._resumeChunk = 0;
-    this._scheduleQueue = [];
-    this._transportQueue = [];
-    this._playState = 0;            /* -1 = pending; 0 = stopped; 1 = playing; */
-    this._scrubState = 0;           /* -1 = pending; 0 = normal; 1 = ff; */
-    this._transportDirection = 1;   /* -1 = reverse; 0 = pending; 1 = forward; */
-    this._transportSpeed = this._playbackSpeeds.min;
+    // GainNode instantiation
     this._masterGain = this._ctx.createGain();
     this._masterGain.connect(this._ctx.destination);
     this._masterGain.gain.value = 1;
-    this.checkSchedule = this.checkSchedule.bind(this);
-    this.transport = {
-      play: this.play.bind(this),
-      stop: this.stop.bind(this),
-      rew_start: this.rew_start.bind(this),
-      rew_stop: this.rew_stop.bind(this),
-      ff_start: this.ff_start.bind(this),
-      ff_stop: this.ff_stop.bind(this),
+    this._bufferGain = this._ctx.createGain();
+    this._bufferGain.connect(this._masterGain);
+    this._bufferGain.gain.value = 0;
+    // Engine timing constants
+    this._sampleRate = this._ctx.sampleRate;
+    this._rampChunkSamples = this.constructor.calcRampChunkSamples(this._sampleRate, chunkLength);
+    this._chunkSamples = this._rampChunkSamples * 2;
+    this._lookaheadSeconds = this.constructor.clampMinValidNumber(lookahead, this.constructor.MIN_LOOKAHEAD_SECONDS);
+    this._scheduledSeconds = this.constructor.clampMinValidNumber(latency, this.constructor.MIN_SCHEDULED_SECONDS);
+    this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
+    this._uiLatency = (this._scheduledSeconds / 5);
+    this._playbackSpeeds = {
+      base: this._clampSpeed(playbackSpeed),
+      min: this._clampSpeed(this.constructor.MIN_PLAYBACK_SPEED),
+      scrub: this._clampSpeed(scrubSpeed),
     };
+    // Engine state
+    this._state = {
+      resumeSample: 0,
+      playing: 0,
+      scrubbing: 0,
+      direction: 1,
+      busy: false,
+    };
+    // Engine queues
+    this._scheduledQueue = [];
+    this._pendingQueue = [];
+    // Engine runtime
+    this._tickInterval = (this._rampChunkSamples / this._sampleRate) * 1e3;
+    this._tickTimeout = null;
+    this._tickCb = this._tick.bind(this);
+    // Loader + metadata
+    this._Loader = new Loader(this._sampleRate);
+    this._totalSamples = 0;
+    this._totalSeconds = 0;
+    // Public engine methods
+    this.load = this._load.bind(this);
+    this.activate = this._activate.bind(this);
+    this.deactivate = this._deactivate.bind(this);
+    // Public transport methods
+    this.play = this._play.bind(this);
+    this.stop = this._stop.bind(this);
+    this.rev = this._rev.bind(this);
+    this.ff = this._ff.bind(this);
+    this.rew = this._rew.bind(this);
   };
 
 
 
 /* ------------------------------------------------------------------ */
-/* Initialization methods */
+/* Public Engine Methods */
 
-  activate() {
-    if (!this.active) {
+  async _load(src, ...args) {
+    const safeSrc = this.constructor.parseLoadSrc(src);
+    this._totalSamples = await this._Loader.load(safeSrc, ...args);
+    this._totalSeconds = this._totalSamples / this._sampleRate;
+    return true;
+  };
+
+  _activate() {
+    if (!this._ctxActive) {
       this._ctx.resume();
     };
+    if (!this._engineActive) {
+      this._tickCb();
+    };
   };
 
-
-  async load(filePaths, cb = null) {
-    if (this.playing) {
-      // console.warn('LOAD --- cannot load while playing');
-      return null;
+  _deactivate() {
+    if (this._ctxActive) {
+      this._ctx.suspend();
     };
-
-    let pending = undefined;
-    try {
-      const loadPromise = this._Loader.load(filePaths);
-      if (cb) {
-        let p = 0;
-        pending = p < 1;
-        while(pending === true) {
-          const nextP = this._Loader.progress;
-          if (nextP !== p) {
-            p = nextP;
-            pending = p < 1;
-            cb(p);
-            if (p >= 1) break;
-          };
-          await this.constructor.sleep(32);
-        };
-      };
-      this._totalSamples = await loadPromise;
-      this._totalChunks = this._totalSamples / this._chunkSamples;
-      return true;
-    } catch (err) {
-      console.error(err);
-      pending = false;
-      return null;
+    if (this._engineActive) {
+      clearTimeout(this._tickTimeout);
     };
   };
 
 
 
 /* ------------------------------------------------------------------ */
-/* Sample data loader interface methods */
+/* Public Transport Methods */
 
-  getBuffer(chunkIndex) {
-    const startSample = chunkIndex * this._chunkSamples;
-    const endSample = (chunkIndex + 1) * this._chunkSamples;
-    const buffer = this._ctx.createBuffer(2, this._chunkSamples, this._sampleRate);
-    if (this._transportDirection < 0) {
-      buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(0, startSample, endSample), 0, 0);
-      buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(1, startSample, endSample), 1, 0);
+  async _play() {
+    await this._transport_setState(this.constructor.TRANSPORT.play);
+    return true;
+  };
+
+  async _stop() {
+    await this._transport_setState(this.constructor.TRANSPORT.stop);
+    return true;
+  };
+
+  async _rev() {
+    await this._transport_setState(this.constructor.TRANSPORT.rev);
+    return true;
+  };
+
+  async _ff() {
+    await this._transport_setState(this.constructor.TRANSPORT.ff);
+    return true;
+  };
+
+  async _rew() {
+    await this._transport_setState(this.constructor.TRANSPORT.rew);
+    return true;
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Engine Tick Callback */
+
+  async _tick() {
+    await this._queue_tick();
+    this._tickTimeout = setTimeout(this._tickCb, this._tickInterval);
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Queue Scheduling + Helpers  */
+
+/* queue runtime */
+  async _queue_tick() {
+    if (this._state.busy) return null;
+    const currentTime = this._ctx.currentTime;
+    this._queue_clearScheduledHead(currentTime);
+    this._queue_schedulePendingChunks(currentTime);
+    if (this._state.playing === 1) {
+      await this._queue_refillPendingChunks();
+    };
+  };
+
+
+/* remove chunks that have finished playing from top of scheduled queue */
+  _queue_clearScheduledHead(ctxTime) {
+    if (!this._scheduledQueue.length) return null;
+    let currentScheduledChunk = this._scheduledQueue[0];
+    let nextStartTime = currentScheduledChunk.ctxNextStartTime;
+    while (nextStartTime < ctxTime) {
+      this._state.resumeSample = currentScheduledChunk.srcEndSample;
+      this._scheduledQueue.shift();
+      currentScheduledChunk = this._scheduledQueue[0];
+      if (!currentScheduledChunk) break;
+      nextStartTime = currentScheduledChunk.ctxNextStartTime;
+    };
+  };
+
+
+/* schedule chunk for playback and assign values to returned chunk object */
+  _queue_scheduleChunk(chunk = {}, startTime = 0) {
+    chunk.node.buffer = chunk.buffer;
+    chunk.node.playbackRate.value = chunk.ctxPlaybackSpeed;
+    chunk.ctxStartTime = this._clampClock(startTime);
+    chunk.ctxLengthSeconds = (
+      (chunk.srcLengthSamples / this._sampleRate) / chunk.node.playbackRate.value
+    );
+    chunk.ctxNextStartTime = chunk.ctxStartTime + chunk.ctxLengthSeconds;
+    chunk.node.connect(this._bufferGain);
+    chunk.node.start(chunk.ctxStartTime, 0);
+    return chunk;
+  };
+
+
+/* schedule gain change */
+  _queue_scheduleGain(ctxEndTime, targetVal) {
+    this._bufferGain.gain.linearRampToValueAtTime(targetVal, ctxEndTime);
+  };
+
+
+/* schedule chunks and shift from pending to scheduled */
+  _queue_schedulePendingChunks(ctxTime) {
+    if (!this._pendingQueue.length) return null;
+    const scheduledChunksFillTarget = ctxTime + this._scheduledSeconds;
+    let lastScheduledChunk = this._scheduledQueue[this._scheduledQueue.length - 1];
+    let lastCtxGain = lastScheduledChunk?.ctxGain ?? 0;
+    let nextStartTime = (
+      lastScheduledChunk?.ctxNextStartTime
+      ?? (ctxTime + this._uiLatency)
+    );
+    while (nextStartTime < scheduledChunksFillTarget) {
+      const nextChunk = this._pendingQueue.shift();
+      if (!nextChunk) break;
+      lastScheduledChunk = this._queue_scheduleChunk(nextChunk, nextStartTime);
+      this._scheduledQueue.push(lastScheduledChunk);
+      if (lastCtxGain !== lastScheduledChunk.ctxGain) {
+        this._queue_scheduleGain(lastScheduledChunk.ctxNextStartTime, lastScheduledChunk.ctxGain);
+      };
+      nextStartTime = lastScheduledChunk.ctxNextStartTime;
+      lastCtxGain = lastScheduledChunk.ctxGain;
+    };
+  };
+
+
+/* repopulate pending queue with new chunks */
+  async _queue_refillPendingChunks() {
+    const lastScheduledEndSample = this._scheduledQueue[this._scheduledQueue.length - 1]?.srcEndSample;
+    const lastPendingChunk = this._pendingQueue[this._pendingQueue.length - 1];
+    if (!lastScheduledEndSample || !lastPendingChunk) return null;
+    const direction = lastPendingChunk.direction;
+    const pendingChunksFillTarget = lastScheduledEndSample + (direction * this._pendingSeconds * this._sampleRate);
+    const speed = lastPendingChunk.ctxPlaybackSpeed;
+    const test = (direction < 0)
+      ? () => (nextStartSample > pendingChunksFillTarget)
+      : () => (nextStartSample < pendingChunksFillTarget);
+    let nextChunk = lastPendingChunk;
+    let nextStartSample = nextChunk.srcEndSample;
+    while (test()) {
+      const startSample = nextStartSample;
+      nextStartSample += this._chunkSamples * direction;
+      nextChunk = await this._chunk_create(startSample, nextStartSample, speed);
+      if (!nextChunk) break;
+      this._pendingQueue.push(nextChunk);
+    };
+  };
+
+
+/* depopulate pending queue */
+  _queue_clearPending() {
+    this._pendingQueue.splice(0, this._pendingQueue.length);
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Chunk Creation + Helpers  */
+
+/* create new playback chunk object and populate buffer with sample data */
+  async _chunk_create(startSample, endSample, speed, gain = 1) {
+    try {
+      const clamped = this._chunk_validateSampleRange(startSample, endSample);
+      if (!clamped) return null;
+      const buffer = await this._chunk_getBuffer(clamped.start, clamped.end);
+      return {
+        node: this._ctx.createBufferSource(),
+        buffer: buffer,
+        direction: (clamped.start < clamped.end) ? 1 : -1,
+        srcStartSeconds: clamped.start / this._sampleRate,
+        srcStartSample: clamped.start,
+        srcEndSample: clamped.end,
+        srcLengthSamples: clamped.srcLengthSamples,
+        ctxPlaybackSpeed: speed,
+        ctxStartTime: null,
+        ctxNextStartTime: null,
+        ctxLengthSeconds: null,
+        ctxGain: gain,
+      };
+    } catch (err) {
+      console.error('_chunk_create', err);
+      return null;
+    };
+  };
+
+
+/* clamp start + end sample values to valid integers and get total sample length */
+  _chunk_validateSampleRange(startSample, endSample) {
+    const start = this._clampSample(startSample);
+    const end = this._clampSample(endSample);
+    const srcLengthSamples = Math.abs(end - start);
+    if (!srcLengthSamples) return null;
+    return {
+      start,
+      end,
+      srcLengthSamples,
+    };
+  };
+
+
+/* create new buffer and populate with sample data from specified range */
+  async _chunk_getBuffer(startSample, endSample) {
+    let buffer;
+    if (endSample < startSample) {
+      buffer = this._ctx.createBuffer(2, startSample - endSample, this._sampleRate);
+      buffer.copyToChannel(await this._Loader.getReverseSampleDataByChannel(0, endSample, startSample), 0, 0);
+      buffer.copyToChannel(await this._Loader.getReverseSampleDataByChannel(1, endSample, startSample), 1, 0);
     } else {
-      buffer.copyToChannel(this._Loader.getSampleDataByChannel(0, startSample, endSample), 0, 0);
-      buffer.copyToChannel(this._Loader.getSampleDataByChannel(1, startSample, endSample), 1, 0);
+      buffer = this._ctx.createBuffer(2, endSample - startSample, this._sampleRate);
+      buffer.copyToChannel(await this._Loader.getSampleDataByChannel(0, startSample, endSample), 0, 0);
+      buffer.copyToChannel(await this._Loader.getSampleDataByChannel(1, startSample, endSample), 1, 0);
     };
     return buffer;
   };
 
 
-  getBufferBatch(startChunkIndex, endChunkIndex) {
-    const buffers = [];
-    let startIndex = startChunkIndex
-    while (startIndex < endChunkIndex) {
-      buffers.push(this.getBuffer(startIndex++));
-    };
-    return buffers;
-  };
-
-
 
 /* ------------------------------------------------------------------ */
-/* Scheduling methods */
+/* Transport State Management + Helpers */
 
-  clampClock(time) {
-    const timeSamples = time * this._sampleRate;
-    const timeSamplesInt = Math.round(timeSamples);
-    const timeSeconds = timeSamplesInt / this._sampleRate;
-    return timeSeconds;
+  async _transport_setState(nextState = {}) {
+    const validNextState = this._transport_validateNextState(nextState);
+    if (!validNextState) return null;
+    await this._transport_awaitBusyState();
+    this._state.busy = true;
+    await this._transport_scheduleDeltaChunks(validNextState);
+    this._transport_applyNextState(validNextState);
+    this._state.busy = false;
   };
 
 
-  scheduleChunk(chunk) {
-    chunk.node.start(chunk.startTime, 0);
-    this._scheduleQueue.push(chunk);
-  };
-
-
-  scheduleChunks(chunks, start) {
-    let nextStartTime = this.clampClock(start);
-    chunks.forEach(chunk => {
-      chunk.startTime = nextStartTime;
-      chunk.playSeconds = (chunk.node.buffer.length / this._sampleRate) / chunk.node.playbackRate.value;
-      nextStartTime += chunk.playSeconds;
-      void this.scheduleChunk(chunk);
-    });
-  };
-
-
-  cancelChunksAfter(startTime) {
-    this._scheduleQueue.forEach((q, qi) => {
-      q.node.onended = null;
-      if (q.startTime >= startTime) {
-        q.node.disconnect(this._masterGain);
-        q.node.stop();
-      };
-    });
-    const spliceIndexStart = this._scheduleQueue
-      .findIndex(q => q.startTime >= startTime);
-    this._scheduleQueue.splice(spliceIndexStart);
-  };
-
-
-  refillQueue() {
-    const endTime = this._ctx.currentTime + this.lookahead;
-    let lastChunk = this._scheduleQueue[this._scheduleQueue.length - 1];
-    if (!lastChunk) {
-      // console.warn('REFILL QUEUE --- no last chunk');
-      return null;
-    };
-
-    while (lastChunk.startTime < endTime) {
-      const nextStartTime = lastChunk.startTime + lastChunk.playSeconds;
-      let nextChunkIndex = lastChunk.id + this._transportDirection;
-      if (Math.floor(nextChunkIndex) !== nextChunkIndex) {
-        const lastSampleLength = lastChunk.node.buffer.length;
-        const nextSampleStart = lastChunk.startSample + (lastSampleLength * this._transportDirection);
-        nextChunkIndex = nextSampleStart / this._chunkSamples;
-      };
-      if (nextChunkIndex >= this._totalChunks) {
-        // console.warn('REFILL QUEUE --- next chunk after range')
-        return null;
-      };
-      if (nextChunkIndex < 0) {
-        // console.warn('REFILL QUEUE --- next chunk before range')
-        return null;
-      };
-      const nextChunk = this.getChunk(nextChunkIndex);
-      nextChunk.startTime = nextStartTime;
-      nextChunk.playSeconds = (nextChunk.node.buffer.length / this._sampleRate) / nextChunk.node.playbackRate.value;
-      void this.scheduleChunk(nextChunk);
-      lastChunk = this._scheduleQueue[this._scheduleQueue.length - 1];
-    };
-  };
-
-
-  checkSchedule(e) {
-    e.target.removeEventListener('ended', this.checkSchedule);
-
-    if (this._scheduleQueue.length < 2) {
-      // console.warn('CHECK SCHEDULE --- not enough in queue');
-      const lastChunk = this._scheduleQueue[0];
-      if (lastChunk) {
-        // console.log('setting resume chunk', lastChunk)
-        this._resumeChunk = lastChunk.id;
-        this._scheduleQueue.splice(0);
-        this._playState = 0;
-      };
-      return null;
-    };
-
-    const now = this._ctx.currentTime;
-    let nextStartTime = this._scheduleQueue[1].startTime;
-    while (nextStartTime < now) {
-      // this._scheduleQueue[0].node.onended = null;
-      this._scheduleQueue[0].node.removeEventListener('ended', this.checkSchedule);
-      this._scheduleQueue.shift();
-      if (this._scheduleQueue.length < 2) break;
-      nextStartTime = this._scheduleQueue[1].startTime;
-    };
-
-    if (this.transportBusy) {
-      // console.log('CHECK SCHEDULE --- transport is busy');
-      return null;
-    };
-
-    if (this._playState === 0) {
-      // console.log('CHECK SCHEDULE --- transport is stopped');
-      return null;
-    };
-
-    this.refillQueue();
-  };
-
-
-
-/* ------------------------------------------------------------------ */
-/* Transport helper methods */
-
-  getChunk(chunkIndex) {
-    const chunk = {
-      id: chunkIndex,
-      node: this._ctx.createBufferSource(),
-      startSample: chunkIndex * this._chunkSamples,
-    };
-    chunk.node.buffer = this.getBuffer(chunkIndex);
-    chunk.node.playbackRate.value = this._transportSpeed;
-    chunk.node.onended = this.checkSchedule;
-    chunk.node.connect(this._masterGain);
-    return chunk;
-  };
-
-
-  getSpeedRampChunks(startChunkIndex, lengthSeconds, startSpeed, endSpeed) {
-    const rampParams = this.calcRampParams(startSpeed, endSpeed, lengthSeconds);
-    return this.genRampChunks(startChunkIndex, rampParams);
-  };
-
-
-  getReverseSpeedRampChunks(startChunkIndex, lengthSeconds, startSpeed, endSpeed) {
-    const rampParams = this.calcRampParams(startSpeed, endSpeed, lengthSeconds);
-    return this.genRampChunks(startChunkIndex, rampParams, true);
-  };
-
-
-  calcRampParams(startSpeed, endSpeed, lengthSeconds) {
-    const lengthSamples = lengthSeconds * this._sampleRate;
-    const lengthRampChunks = Math.floor(lengthSamples / this._rampChunkSamples);
-    const speedRange = endSpeed - startSpeed;
-    const speedStep = speedRange / lengthRampChunks;
-    const rampChunkParams = new Array(lengthRampChunks).fill()
-      .map((d, i) => {
-        const speedApprox = startSpeed + (i * speedStep);
-        const lengthSrcSamples = Math.round(this._rampChunkSamples * speedApprox);
-        const speed = lengthSrcSamples / this._rampChunkSamples;
-        return {
-          lengthSrcSamples,
-          speed,
-        };
-      });
-    const lengthSrcSamples = rampChunkParams
-      .reduce((acc, d) => acc += d.lengthSrcSamples, 0);
-    const lengthChunks = Math.ceil(lengthSrcSamples / this._chunkSamples);
-    const lengthTotalSamples = lengthChunks * this._chunkSamples;
-    const overflowSamples = lengthTotalSamples - lengthSrcSamples;
-    if (overflowSamples < 0) {
-      // console.warn('CALC RAMP PARAMS --- sample calc underrun');
-    };
-    if (overflowSamples > 0) {
-      rampChunkParams.push({
-        lengthSrcSamples: overflowSamples,
-        speed: endSpeed,
-      });
-    };
-    const durationSeconds = (lengthRampChunks *  this._rampChunkSamples) / this._sampleRate;
-    return {
-      rampChunkParams,
-      lengthChunks,
-      durationSeconds,
-    };
-  };
-
-
-  genRampChunks(startChunkIndex, rampParams, reverse = false) {
-    const { rampChunkParams, lengthChunks, durationSeconds } = rampParams;
-    const endChunkIndex = startChunkIndex + (reverse ? -lengthChunks : lengthChunks);
-    const rampStartSample = startChunkIndex * this._chunkSamples;
-    if (rampStartSample < 0 || rampStartSample >= this._totalSamples) {
-      // console.warn('GEN RAMP CHUNKS --- start out of bounds');
-    };
-    const rampEndSample = endChunkIndex * this._chunkSamples;
-    if (rampEndSample < 0 || rampEndSample >= this._totalSamples) {
-      // console.warn('GEN RAMP CHUNKS --- end out of bounds');
-    };
-    let nextStartSample = rampStartSample;
-    const rampChunks = rampChunkParams.map(r => {
-      const startSample = nextStartSample;
-      if (reverse) {
-        nextStartSample -= r.lengthSrcSamples;
-      } else {
-        nextStartSample += r.lengthSrcSamples;
-      };
-      const chunk = {
-        id: startSample / this._chunkSamples,
-        node: this._ctx.createBufferSource(),
-        startSample: startSample,
-      };
-      chunk.node.buffer = this._ctx.createBuffer(2, r.lengthSrcSamples, this._sampleRate);
-      if (reverse) {
-        chunk.node.buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(0, nextStartSample, startSample), 0, 0);
-        chunk.node.buffer.copyToChannel(this._Loader.getReverseSampleDataByChannel(1, nextStartSample, startSample), 1, 0);
-      } else {
-        chunk.node.buffer.copyToChannel(this._Loader.getSampleDataByChannel(0, startSample, nextStartSample), 0, 0);
-        chunk.node.buffer.copyToChannel(this._Loader.getSampleDataByChannel(1, startSample, nextStartSample), 1, 0);
-      };
-      chunk.node.playbackRate.value = r.speed;
-      chunk.node.onended = this.checkSchedule;
-      chunk.node.connect(this._masterGain);
-      return chunk;
-    });
-    if (nextStartSample !== rampEndSample) {
-      const diff = nextStartSample - rampEndSample;
-      // console.warn('GEN RAMP CHUNKS --- sample lengths do not match', diff)
-    };
-    return {
-      rampChunks,
-      endChunkIndex,
-      durationSeconds,
-    };
-  };
-
-
-
-/* ------------------------------------------------------------------ */
-/* Audio methods */
-
-  rampGainAtTime(val, startTime, endTime, cancel = true) {
-    const node = this._masterGain.gain;
-    if (cancel) {
-      node.cancelScheduledValues(startTime);
-      const nowVal = node.value;
-      node.linearRampToValueAtTime(nowVal, startTime);
-    };
-    node.linearRampToValueAtTime(val, endTime);
-  };
-
-
-
-/* ------------------------------------------------------------------ */
-/* Transport queue management */
-
-  async waitForTransport() {
-    while (this.transportBusy) {
-      await this.constructor.sleep(16);
+  async _transport_awaitBusyState() {
+    while (this._state.busy === true) {
+      await new Promise(res => setTimeout(res, 16));
     };
     return true;
   };
 
 
-  getNextSafeChunk(targetTime) {
-    const minTimeTarget = targetTime || this._ctx.currentTime + this._uiLatency;
-    const reqdChunks = this._scheduleQueue.filter(c => c.REQD === true);
-    const minReqdTargetTime = (reqdChunks.length)
-      ? reqdChunks[reqdChunks.length - 1]
-      : minTimeTarget;
-    const chunk = this._scheduleQueue.find(c => c.startTime >= minReqdTargetTime);
-    if (!chunk) return null;
-    return chunk;
+/* validate nextState object and return null if invalid */
+  _transport_validateNextState(nextState = {}) {
+    const nextDirection = nextState?.direction;
+    switch (true) {
+      // no state change, abort
+      case Object.entries(nextState).every(([key, val]) => this._state[key] === val):
+        return null;
+      // attempting to play reverse past zero, abort
+      case ((this._state.resumeSample <= 0) && (nextDirection !== 1)):
+        return null;
+      // attempting to play past the end, abort
+      case ((this._state.resumeSample >= this._totalSamples) && (nextDirection !== -1)):
+        return null;
+      // valid nextState, return nextState params object
+      default:
+        return {
+          nextDirection,
+          nextPlaying: nextState?.playing,
+          nextScrubbing: nextState?.scrubbing,
+        };
+    };
   };
 
 
-  calcSpeedRampDuration(startSpeed, endSpeed) {
-    const baseDelta = Math.abs(startSpeed - endSpeed);
-    const sqrt = Math.sqrt(baseDelta);
-    return sqrt;
+/* assign nextState values to state */
+  _transport_applyNextState(nextState = {}) {
+    this._state.direction = nextState.nextDirection;
+    this._state.scrubbing = nextState.nextScrubbing;
+    this._state.playing = nextState.nextPlaying;
   };
 
 
-  async requestTransport() {
-    if (!this.buffered) {
-      return null;
+/* clear pending queue and populate with ramp chunks transitioning to new state */
+  async _transport_scheduleDeltaChunks({
+    nextDirection,
+    nextPlaying,
+    nextScrubbing,
+  } = {}) {
+    this._queue_clearPending();
+    const {
+      startSpeed,
+      startDirection,
+      srcStartSample,
+    } = this._transport_getInitParams();
+    const endSpeed = this._transport_calcEndSpeed(nextPlaying, nextScrubbing);
+    if (nextDirection === startDirection) {   // change speed in same direction
+      await this._transport_pushRamp({
+        startSpeed: startSpeed,
+        endSpeed: endSpeed,
+        srcStartSample: srcStartSample,
+        direction: nextDirection,
+        ignoreGain: (startSpeed !== this._playbackSpeeds.min) && (endSpeed !== this._playbackSpeeds.min),
+      });
+    } else {    // change directions
+      const midSample = await this._transport_pushRamp({
+        startSpeed: startSpeed,
+        endSpeed: this._playbackSpeeds.min,
+        srcStartSample: srcStartSample,
+        direction: startDirection,
+      });
+      await this._transport_pushRamp({
+        startSpeed: this._playbackSpeeds.min,
+        endSpeed: endSpeed,
+        srcStartSample: midSample ? midSample : srcStartSample,
+        direction: nextDirection,
+      });
     };
-    if (this.transportBusy) {
-      await this.waitForTransport();
-    };
-    if (this._transportQueue.length) {
-      this._transportQueue.splice(1);
-    } else {
-      return null;
-    };
-    this.deltaTransport(this._transportQueue.pop());
   };
 
 
-  async deltaTransport({ playState, scrubState, transportDirection, id } = {}) {
-    const oldPlayState = this._playState;
-    const oldScrubState = this._scrubState;
-    const oldTransportDirection = this._transportDirection;
-    let newPlayState;
-    let newScrubState;
-    let newTransportDirection;
-    if ((playState !== undefined) && (playState !== oldPlayState)) {
-      newPlayState = playState;
-      this._playState = -1;
+  _transport_getInitParams() {
+    const lastScheduledChunk = this._scheduledQueue[this._scheduledQueue.length - 1];
+    return {
+      startSpeed: lastScheduledChunk?.ctxPlaybackSpeed ?? this._playbackSpeeds.min,
+      startDirection: lastScheduledChunk?.direction ?? this._state.direction,
+      srcStartSample: lastScheduledChunk?.srcEndSample ?? this._state.resumeSample,
+      ctxStartGain: lastScheduledChunk?.ctxGain ?? 0,
     };
-    if ((scrubState !== undefined) && (scrubState !== oldScrubState)) {
-      newScrubState = scrubState;
-      this._scrubState = -1;
-    };
-    if ((transportDirection !== undefined) && (transportDirection !== oldTransportDirection)) {
-      newTransportDirection = transportDirection;
-      this._transportDirection = 0;
-    };
-    if (!this.transportBusy) return null;
+  };
 
-    let startChunkIndex,
-        startTime,
-        startSpeed,
-        endSpeed = this._playbackSpeeds.base,
-        endGain = 1;
 
-    const nextSafeChunk = this.getNextSafeChunk();
-    if (!nextSafeChunk) {
-      startChunkIndex = this._resumeChunk;
-      startTime = this.clampClock(this._ctx.currentTime + this._uiLatency);
-      startSpeed = this._playbackSpeeds.min;
-    } else {
-      startChunkIndex = nextSafeChunk.id;
-      startTime = nextSafeChunk.startTime;
-      startSpeed = nextSafeChunk.node.playbackRate.value;
-      void this.cancelChunksAfter(startTime);
-    };
-
-    if (newPlayState !== undefined) {
-      if (newPlayState === 0) {
-        endSpeed = this._playbackSpeeds.min;
-        endGain = 0;
-      };
-    };
-    if (newScrubState !== undefined) {
-      if (newScrubState === 1) {
+  _transport_calcEndSpeed(nextPlaying, nextScrubbing) {
+    let endSpeed = this._playbackSpeeds.min;
+    if (nextPlaying === 1) {
+      if (nextScrubbing === 1) {
         endSpeed = this._playbackSpeeds.scrub;
       };
-    };
-
-    const speedRampChunks = [];
-    let endChunkIndex;
-
-    if (newTransportDirection === undefined) {
-      const speedRampLengthSeconds = this.calcSpeedRampDuration(startSpeed, endSpeed);
-      const speedRamp = this.getSpeedRampChunks(startChunkIndex, speedRampLengthSeconds, startSpeed, endSpeed);
-      speedRampChunks.push(...speedRamp.rampChunks);
-      endChunkIndex = speedRamp.endChunkIndex;
-      const gainRampEnd = startTime + (speedRamp.durationSeconds * .8);
-      const gainRampLengthSeconds = (speedRamp.durationSeconds * .4);
-      const gainRampStart = gainRampEnd - gainRampLengthSeconds;
-      if (newPlayState !== undefined) {
-        void this.rampGainAtTime(endGain, gainRampStart, gainRampEnd);
+      if (nextScrubbing === 0) {
+        endSpeed = this._playbackSpeeds.base;
       };
     };
+    return endSpeed;
+  };
 
-    let zeroTime = startTime;
 
-    if (newTransportDirection !== undefined) {
-      let turnaroundChunkIndex = startChunkIndex;
-
-      if (startSpeed > this._playbackSpeeds.min) { // was already playing, need to ramp down
-        let speedRampDown;
-        const speedRampDownLengthSeconds = this.calcSpeedRampDuration(startSpeed, this._playbackSpeeds.min)
-        if (newTransportDirection === 1) {
-          speedRampDown = this.getReverseSpeedRampChunks(startChunkIndex, speedRampDownLengthSeconds, startSpeed, this._playbackSpeeds.min);
-        } else if (newTransportDirection === -1) {
-          speedRampDown = this.getSpeedRampChunks(startChunkIndex, speedRampDownLengthSeconds, startSpeed, this._playbackSpeeds.min);
-        };
-        turnaroundChunkIndex = speedRampDown.rampChunks.pop().id;
-        speedRampChunks.push(...speedRampDown.rampChunks);
-        speedRampChunks.forEach(chunk => chunk.REQD === true);
-        zeroTime += speedRampDown.durationSeconds;
-        const gainRampDownEnd = startTime + (speedRampDown.durationSeconds * .8);
-        const gainRampDownLengthSeconds = (speedRampDown.durationSeconds * .4);
-        const gainRampDownStart = gainRampDownEnd - gainRampDownLengthSeconds;
-        void this.rampGainAtTime(0, gainRampDownStart, gainRampDownEnd);
+  async _transport_pushRamp({
+    startSpeed,
+    endSpeed,
+    srcStartSample,
+    direction = 1,
+    ignoreGain = false,
+  } = {}) {
+    const rampChunkParams = this._transport_calcRampChunkParams(startSpeed, endSpeed);
+    let nextStartSample = srcStartSample;
+    while (rampChunkParams.length) {
+      const startSample = nextStartSample;
+      const { lengthSrcSamples, speed, gain } = rampChunkParams.shift();
+      nextStartSample += lengthSrcSamples * direction;
+      const chunk = await this._chunk_create(startSample, nextStartSample, speed);
+      if (!chunk) break;
+      if (!ignoreGain) {
+        chunk.ctxGain = gain;
       };
-
-      let speedRampUp;
-      const speedRampUpLengthSeconds = this.calcSpeedRampDuration(this._playbackSpeeds.min, endSpeed);
-      if (newTransportDirection === 1) {
-        speedRampUp = this.getSpeedRampChunks(turnaroundChunkIndex, speedRampUpLengthSeconds, this._playbackSpeeds.min, endSpeed);
-      } else if (newTransportDirection === -1) {
-        speedRampUp = this.getReverseSpeedRampChunks(turnaroundChunkIndex, speedRampUpLengthSeconds, this._playbackSpeeds.min, endSpeed);
+      this._pendingQueue.push(chunk);
+      if (!rampChunkParams.length) {
+        return chunk.srcEndSample;
       };
-      endChunkIndex = speedRampUp.endChunkIndex;
-      speedRampChunks.push(...speedRampUp.rampChunks);
-      const gainRampUpEnd = zeroTime + (speedRampUp.durationSeconds * .8);
-      const gainRampUpLengthSeconds = (speedRampUp.durationSeconds * .4);
-      const gainRampUpStart = gainRampUpEnd - gainRampUpLengthSeconds;
-      void this.rampGainAtTime(endGain, gainRampUpStart, gainRampUpEnd, false);
-
-      this._transportDirection = newTransportDirection;
     };
+  };
 
-    void this.scheduleChunks(speedRampChunks, startTime);
 
-    this._transportSpeed = endSpeed;
-
-    if (newPlayState === 0) {
-      this._resumeChunk = endChunkIndex;
-    } else {
-      void this.refillQueue();
+  _transport_calcRampChunkParams(startSpeed, endSpeed) {
+    const speedStep = this._transport_calcRampSpeedStep(startSpeed, endSpeed);
+    const rampChunkParams = [];
+    let nextSpeed = startSpeed;
+    while (true) {
+      const speed = this._clampSpeed(nextSpeed);
+      const gain = Math.max(0, Math.min(1, speed - this._playbackSpeeds.min));
+      const lengthSrcSamples = this._rampChunkSamples * speed;
+      rampChunkParams.push({ speed, lengthSrcSamples, gain });
+      if (speed === endSpeed) break;
+      if (Math.abs(endSpeed - nextSpeed) < Math.abs(speedStep)) {
+        nextSpeed = endSpeed;
+        continue;
+      };
+      nextSpeed += speedStep;
     };
+    return rampChunkParams;
+  };
 
-    while (this._ctx.currentTime < zeroTime) {
-      await this.constructor.sleep(32);
-    };
 
-    if (this._playState < 0) {
-      this._playState = newPlayState;
-    };
-
-    if (this._scrubState < 0) {
-      this._scrubState = newScrubState;
-    };
+  _transport_calcRampSpeedStep(startSpeed, endSpeed) {
+    const lengthSeconds = this.constructor.calcRampDuration(startSpeed, endSpeed);
+    const lengthSamples = lengthSeconds * this._sampleRate;
+    const lengthRampChunks = Math.floor(lengthSamples / this._rampChunkSamples);
+    const speedDelta = endSpeed - startSpeed;
+    return speedDelta / lengthRampChunks;
   };
 
 
 
 /* ------------------------------------------------------------------ */
-/* Transport public methods */
+/* Misc Helpers */
 
-  async play() {
-    this._transportQueue.push({
-      playState: 1,
-      scrubState: 0,
-      transportDirection: 1,
-      id: 'play',
-    });
-    this.requestTransport();
+/* clamp seconds value to whole-sample equivalent float */
+  _clampClock(seconds) {
+    const timeSamples = seconds * this._sampleRate;
+    const timeSamplesWhole = Math.round(timeSamples);
+    return timeSamplesWhole / this._sampleRate;
   };
 
-  async stop() {
-    this._transportQueue.push({
-      playState: 0,
-      scrubState: 0,
-      transportDirection: 1,
-      id: 'stop',
-    });
-    this.requestTransport();
+
+/* clamp speed value to whole-sample equivalent float */
+  _clampSpeed(speed) {
+    const safeSpeed = this.constructor.clampMinValidNumber(speed, this.constructor.MIN_PLAYBACK_SPEED);
+    const srcChunkSamples = this._rampChunkSamples * safeSpeed;
+    const targetSrcChunkSamples = Math.round(srcChunkSamples);
+    const targetSpeed = (targetSrcChunkSamples / this._rampChunkSamples);
+    return targetSpeed;
   };
 
-  async rew_start() {
-    this._transportQueue.push({
-      playState: 1,
-      scrubState: 1,
-      transportDirection: -1,
-      id: 'rew_start'
-    });
-    this.requestTransport();
+
+/* clamp arbitrary sample value to integer within available range */
+  _clampSample(sample) {
+    if (sample < 0) {
+      return 0;
+    };
+    if (sample >= this._totalSamples) {
+      return this._totalSamples;
+    };
+    return parseInt(sample, 10);
   };
 
-  async rew_stop() {
-    this._transportQueue.push({
-      playState: 1,
-      scrubState: 0,
-      transportDirection: 1,
-      id: 'rew_stop'
-    });
-    this.requestTransport();
-  };
-
-  async ff_start() {
-    this._transportQueue.push({
-      playState: 1,
-      scrubState: 1,
-      transportDirection: 1,
-      id: 'ff_start'
-    });
-    this.requestTransport();
-  };
-
-  async ff_stop() {
-    this._transportQueue.push({
-      playState: 1,
-      scrubState: 0,
-      transportDirection: 1,
-      id: 'ff_stop'
-    });
-    this.requestTransport();
-  };
 
 
 };

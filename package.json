@@ -1,11 +1,12 @@
 {
   "name": "audiotape",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Audio playback engine that simulates analog audio tape and transport functions.",
   "keywords": [
     "WebAudio",
     "audio",
-    "tape"
+    "tape",
+    "audiotape"
   ],
   "license": "MIT",
   "author": {

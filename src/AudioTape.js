@@ -1,80 +1,111 @@
-import { Player } from './';
+import {
+  Player,
+  Loader,
+  LoaderLite,
+} from './';
 
 
 
 
 
 export default class AudioTape {
-  constructor(...args) {
-    let _fileURLs,
-        _params;
-    switch (args.length) {
-      case 2:
-        if (typeof args[0] === 'string') {
-          _fileURLs = [args[0]];
-        };
-        if (Array.isArray(args[0]) && args[0].every(d => typeof d === 'string')) {
-          _fileURLs = args[0];
-        };
-        if (typeof args[1] === 'object') {
-          _params = args[1];
-        };
-        break;
-      case 1:
-        if (typeof args[0] === 'string') {
-          _fileURLs = [args[0]];
-          break;
-        };
-        if (Array.isArray(args[0]) && args[0].every(d => typeof d === 'string')) {
-          _fileURLs = args[0];
-          break;
-        };
-        if (typeof args[0] === 'object') {
-          _params = args[0];
-        };
-        break;
-      case 0:
-        break;
-      default:
-        throw new Error('Invalid constructor arguments');
-    };
-    const fileURLs = _fileURLs;
-    const params = _params || {};
-    this._Player = new Player({
-      sampleRate: params.sampleRate || 48e3,
-      chunkSeconds: params.chunkLength || .02,
-      lookahead: params.lookahead || 2,
-      latency: params.latency || .1,
-      playbackSpeed: params.playbackSpeed || 1,
-      scrubSpeed: params.scrubSpeed || 5,
-    });
-    this.load = this.load.bind(this);
-    this.getPlayhead = this.getPlayhead.bind(this);
-    this.play = this._Player.transport.play;
-    this.stop = this._Player.transport.stop;
-    this.rew_start = this._Player.transport.rew_start;
-    this.rew_stop = this._Player.transport.rew_stop;
-    this.ff_start = this._Player.transport.ff_start;
-    this.ff_stop = this._Player.transport.ff_stop;
-    if (!!fileURLs) {
-      this.load(...fileURLs);
-    };
+
+/* ------------------------------------------------------------------ */
+/* Getters */
+
+  get sampleRate() {
+    return this._Player.sampleRate;
   };
 
-
-  async load(...files) {
-    if (!files.length) return null;
-    let urls = files;
-    if (files.length === 1 && Array.isArray(files[0])) {
-      urls = files[0];
-    };
-    if (!urls.every(d => typeof d === 'string')) return null;
-    await this._Player.load(urls);
-    return true;
+  get active() {
+    return this._Player.active;
   };
 
+  get totalSeconds() {
+    return this._Player.totalSeconds;
+  };
 
-  getPlayhead() {
+  get playhead() {
     return this._Player.playhead;
   };
+
+  get lookahead() {
+    return this._Player.lookahead;
+  };
+
+  get latency() {
+    return this._Player.latency;
+  };
+
+  get playbackSpeed() {
+    return this._Player.playbackSpeed;
+  };
+
+  get scrubSpeed() {
+    return this._Player.scrubSpeed;
+  };
+
+  get volume() {
+    return this._Player.volume;
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Constructor */
+
+  constructor({
+    sampleRate = 48e3,
+    chunkLength = .02,
+    lookahead = 10,
+    latency = .2,
+    playbackSpeed = 1,
+    scrubSpeed = 8,
+    LOW_MEMORY_MODE = false,
+  } = {}) {
+    // Player class instance
+    this._Player = new Player({
+      sampleRate,
+      chunkLength,
+      lookahead,
+      latency,
+      playbackSpeed,
+      scrubSpeed,
+      Loader: LOW_MEMORY_MODE ? LoaderLite : Loader,
+    });
+    // Public engine methods
+    this.load = this._Player.load;
+    this.activate = this._Player.activate;
+    this.deactivate = this._Player.deactivate;
+    // Public transport methods
+    this.play = this._Player.play;
+    this.stop = this._Player.stop;
+    this.rev = this._Player.rev;
+    this.ff = this._Player.ff;
+    this.rew = this._Player.rew;
+    // Public configuration methods
+    this.setPlaybackSpeed = this._setPlaybackSpeed.bind(this);
+    this.setScrubSpeed = this._setScrubSpeed.bind(this);
+    this.setVolume = this._setVolume.bind(this);
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Public Configuration Methods */
+
+  _setPlaybackSpeed(speed) {
+    this._Player.playbackSpeed = speed;
+  };
+
+  _setScrubSpeed(speed) {
+    this._Player.scrubSpeed = speed;
+  };
+
+  _setVolume(val) {
+    this._Player.volume = val;
+  };
+
+
+
 };
