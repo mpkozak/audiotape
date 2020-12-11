@@ -1,60 +1,9 @@
 export default class Player {
 
 /* ------------------------------------------------------------------ */
-/* Static Properties */
+/* "Static" Methods */
 
-  // default constructor argument parameter values
-  static DEFAULT_SAMPLE_RATE = 48e3;
-  static DEFAULT_CHUNK_LENGTH = .02;
-  static DEFAULT_LOOKAHEAD = 5;
-  static DEFAULT_LATENCY = .1;
-  static DEFAULT_PLAYBACK_SPEED = 1;
-  static DEFAULT_SCRUB_SPEED = 5;
-
-  // minimum parameter values
-  static MIN_LOOKAHEAD_SECONDS = 1;
-  static MIN_SCHEDULED_SECONDS = .1;
-  static MIN_PLAYBACK_SPEED = .1;
-
-  // chunk sample size constants
-  static KBIN_SAMPLES = 128;
-  static MIN_RAMP_CHUNK_KBINS = 4;
-
-  // pre-defined parameter objects for transport state changes
-  static TRANSPORT = {
-    play: {
-      playing: 1,
-      scrubbing: 0,
-      direction: 1,
-    },
-    stop: {
-      playing: 0,
-      scrubbing: 0,
-      direction: 1,
-    },
-    rev: {
-      playing: 1,
-      scrubbing: 0,
-      direction: -1,
-    },
-    ff: {
-      playing: 1,
-      scrubbing: 1,
-      direction: 1,
-    },
-    rew: {
-      playing: 1,
-      scrubbing: 1,
-      direction: -1,
-    },
-  };
-
-
-
-/* ------------------------------------------------------------------ */
-/* Static Methods */
-
-  static calcRampChunkSamples(sampleRate, targetRampChunkSeconds) {
+  _calcRampChunkSamples(sampleRate, targetRampChunkSeconds) {
     const targetRampChunkSamples = Math.floor(sampleRate * targetRampChunkSeconds);
     const targetRampChunkKBins = Math.round(targetRampChunkSamples / this.KBIN_SAMPLES);
     const rampChunkKBins = Math.max(this.MIN_RAMP_CHUNK_KBINS, targetRampChunkKBins);
@@ -62,18 +11,18 @@ export default class Player {
     return rampChunkSamples;
   };
 
-  static clampMinValidNumber(val, minVal) {
+  _clampMinValidNumber(val, minVal) {
     if (typeof val === 'number' && val >= minVal) {
       return val;
     };
     return minVal;
-  };
+  }
 
-  static calcRampDuration(startSpeed, endSpeed) {
+  _calcRampDuration(startSpeed, endSpeed) {
     return Math.sqrt(Math.abs(startSpeed - endSpeed));
   };
 
-  static parseLoadSrc(src) {
+  _parseLoadSrc(src) {
     if (Array.isArray(src)) {
       if (!src.every(url => typeof url === 'string')) {
         throw new TypeError('Source URLs must be strings');
@@ -162,12 +111,12 @@ export default class Player {
 /* Setters */
 
   set lookahead(seconds) {
-    this._lookaheadSeconds = this.constructor.clampMinValidNumber(seconds, this.constructor.MIN_LOOKAHEAD_SECONDS);
+    this._lookaheadSeconds = this._clampMinValidNumber(seconds, this.MIN_LOOKAHEAD_SECONDS);
     this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
   };
 
   set latency(seconds) {
-    this._scheduledSeconds = this.constructor.clampMinValidNumber(seconds, this.constructor.MIN_SCHEDULED_SECONDS);
+    this._scheduledSeconds = this._clampMinValidNumber(seconds, this.MIN_SCHEDULED_SECONDS);
     this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
     this._uiLatency = (this._scheduledSeconds / 5);
   };
@@ -176,10 +125,10 @@ export default class Player {
     this._playbackSpeeds.base = this._clampSpeed(speed);
     if (!this._state.busy && !this._state.scrubbing && this._state.playing) {
       if (this._state.direction === 1) {
-        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.play});
+        this._transport_setState({ delta: true, ...this.TRANSPORT.play});
       };
       if (this._state.direction === -1) {
-        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.rev});
+        this._transport_setState({ delta: true, ...this.TRANSPORT.rev});
       };
     };
   };
@@ -188,16 +137,16 @@ export default class Player {
     this._playbackSpeeds.scrub = this._clampSpeed(speed);
     if (!this._state.busy && this._state.scrubbing && this._state.playing) {
       if (this._state.direction === 1) {
-        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.ff});
+        this._transport_setState({ delta: true, ...this.TRANSPORT.ff});
       };
       if (this._state.direction === -1) {
-        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.rew});
+        this._transport_setState({ delta: true, ...this.TRANSPORT.rew});
       };
     };
   };
 
   set volume(val) {
-    const safeVal = this.constructor.clampMinValidNumber(val, 0);
+    const safeVal = this._clampMinValidNumber(val, 0);
     const now = this._ctx.currentTime;
     const rampEnd = now + this._uiLatency;
     this._masterGain.gain.cancelScheduledValues(now);
@@ -211,15 +160,57 @@ export default class Player {
 
   constructor({
     /* fixed at instantiation */
-    sampleRate = this.constructor.DEFAULT_SAMPLE_RATE,
-    chunkLength = this.constructor.DEFAULT_CHUNK_LENGTH,
+    sampleRate = 48e3,
+    chunkLength = .02,
     /* can change via setters */
-    lookahead = this.constructor.DEFAULT_LOOKAHEAD,
-    latency = this.constructor.DEFAULT_LATENCY,
-    playbackSpeed = this.constructor.DEFAULT_PLAYBACK_SPEED,
-    scrubSpeed = this.constructor.DEFAULT_SCRUB_SPEED,
+    lookahead = 5,
+    latency = .1,
+    playbackSpeed = 1,
+    scrubSpeed = 8,
     Loader,
   } = {}) {
+    // STATIC default constructor argument parameter values
+    this.DEFAULT_SAMPLE_RATE = 48e3;
+    this.DEFAULT_CHUNK_LENGTH = .02;
+    this.DEFAULT_LOOKAHEAD = 5;
+    this.DEFAULT_LATENCY = .1;
+    this.DEFAULT_PLAYBACK_SPEED = 1;
+    this.DEFAULT_SCRUB_SPEED = 5;
+    // STATIC minimum parameter values
+    this.MIN_LOOKAHEAD_SECONDS = 1;
+    this.MIN_SCHEDULED_SECONDS = .1;
+    this.MIN_PLAYBACK_SPEED = .1;
+    // STATIC chunk sample size constants
+    this.KBIN_SAMPLES = 128;
+    this.MIN_RAMP_CHUNK_KBINS = 4;
+    // STATIC pre-defined parameter objects for transport state changes
+    this.TRANSPORT = {
+      play: {
+        playing: 1,
+        scrubbing: 0,
+        direction: 1,
+      },
+      stop: {
+        playing: 0,
+        scrubbing: 0,
+        direction: 1,
+      },
+      rev: {
+        playing: 1,
+        scrubbing: 0,
+        direction: -1,
+      },
+      ff: {
+        playing: 1,
+        scrubbing: 1,
+        direction: 1,
+      },
+      rew: {
+        playing: 1,
+        scrubbing: 1,
+        direction: -1,
+      },
+    };
     // AudioContext
     this._ctx = new AudioContext({ sampleRate });
     // GainNode instantiation
@@ -231,15 +222,15 @@ export default class Player {
     this._bufferGain.gain.value = 0;
     // Engine timing constants
     this._sampleRate = this._ctx.sampleRate;
-    this._rampChunkSamples = this.constructor.calcRampChunkSamples(this._sampleRate, chunkLength);
+    this._rampChunkSamples = this._calcRampChunkSamples(this._sampleRate, chunkLength);
     this._chunkSamples = this._rampChunkSamples * 2;
-    this._lookaheadSeconds = this.constructor.clampMinValidNumber(lookahead, this.constructor.MIN_LOOKAHEAD_SECONDS);
-    this._scheduledSeconds = this.constructor.clampMinValidNumber(latency, this.constructor.MIN_SCHEDULED_SECONDS);
+    this._lookaheadSeconds = this._clampMinValidNumber(lookahead, this.MIN_LOOKAHEAD_SECONDS);
+    this._scheduledSeconds = this._clampMinValidNumber(latency, this.MIN_SCHEDULED_SECONDS);
     this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
     this._uiLatency = (this._scheduledSeconds / 5);
     this._playbackSpeeds = {
       base: this._clampSpeed(playbackSpeed),
-      min: this._clampSpeed(this.constructor.MIN_PLAYBACK_SPEED),
+      min: this._clampSpeed(this.MIN_PLAYBACK_SPEED),
       scrub: this._clampSpeed(scrubSpeed),
     };
     // Engine state
@@ -279,7 +270,7 @@ export default class Player {
 /* Public Engine Methods */
 
   async _load(src, ...args) {
-    const safeSrc = this.constructor.parseLoadSrc(src);
+    const safeSrc = this._parseLoadSrc(src);
     this._totalSamples = await this._Loader.load(safeSrc, ...args);
     this._totalSeconds = this._totalSamples / this._sampleRate;
     return true;
@@ -309,27 +300,27 @@ export default class Player {
 /* Public Transport Methods */
 
   async _play() {
-    await this._transport_setState(this.constructor.TRANSPORT.play);
+    await this._transport_setState(this.TRANSPORT.play);
     return true;
   };
 
   async _stop() {
-    await this._transport_setState(this.constructor.TRANSPORT.stop);
+    await this._transport_setState(this.TRANSPORT.stop);
     return true;
   };
 
   async _rev() {
-    await this._transport_setState(this.constructor.TRANSPORT.rev);
+    await this._transport_setState(this.TRANSPORT.rev);
     return true;
   };
 
   async _ff() {
-    await this._transport_setState(this.constructor.TRANSPORT.ff);
+    await this._transport_setState(this.TRANSPORT.ff);
     return true;
   };
 
   async _rew() {
-    await this._transport_setState(this.constructor.TRANSPORT.rew);
+    await this._transport_setState(this.TRANSPORT.rew);
     return true;
   };
 
@@ -675,7 +666,7 @@ export default class Player {
 
 
   _transport_calcRampSpeedStep(startSpeed, endSpeed) {
-    const lengthSeconds = this.constructor.calcRampDuration(startSpeed, endSpeed);
+    const lengthSeconds = this._calcRampDuration(startSpeed, endSpeed);
     const lengthSamples = lengthSeconds * this._sampleRate;
     const lengthRampChunks = Math.floor(lengthSamples / this._rampChunkSamples);
     const speedDelta = endSpeed - startSpeed;
@@ -697,7 +688,7 @@ export default class Player {
 
 /* clamp speed value to whole-sample equivalent float */
   _clampSpeed(speed) {
-    const safeSpeed = this.constructor.clampMinValidNumber(speed, this.constructor.MIN_PLAYBACK_SPEED);
+    const safeSpeed = this._clampMinValidNumber(speed, this.MIN_PLAYBACK_SPEED);
     const srcChunkSamples = this._rampChunkSamples * safeSpeed;
     const targetSrcChunkSamples = Math.round(srcChunkSamples);
     const targetSpeed = (targetSrcChunkSamples / this._rampChunkSamples);
