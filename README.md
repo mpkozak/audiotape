@@ -124,9 +124,9 @@ Invocation enqueues a playback state change which the playback engine will dynam
 The current playback volume level can be read using the `volume` getter and set using the `setVolume()` method:
 
 ```js
-console.log(tape.volume);	// 1
+console.log(tape.volume);  // 1
 tape.setVolume(.5);
-console.log(tape.volume);	// .5
+console.log(tape.volume);  // .5
 ```
 
 The value specified for `volume` is a multipler of the default unity gain level (1).
@@ -139,122 +139,113 @@ The value specified for `volume` is a multipler of the default unity gain level 
 
 #### `new AudioTape([params])`
 > Creates a new `AudioTape` instance.
-
+>
 > **Arguments:**
-
->> `params` *[object]* ***optional***: See [customization](#customization).
+>
+> `params` *[object]* ***optional***: See [customization](#customization).
 
 ### Methods:
 
 #### `load(src[, callback])` *\*async\**
 > Loads audio file(s) for playback.
-
+>
 > **Arguments:**
-
->> `src` *[string, array]*: URL(s) signifying the path(s) (relative or absolute) of audio files to load. Accepts either a single URL *[string]* or an *[array]* of URL *[string]*s. 
-
->> `callback` *[function]* ***optional***: function to be invoked upon successful completion of loading of each specified file. Function is passed a single argument  *[number]* representing the percent of files to have completed loading as a fraction of 1.
-
+>
+> `src` *[string, array]*: URL(s) signifying the path(s) (relative or absolute) of audio files to load. Accepts either a single URL *[string]* or an *[array]* of URL *[string]* values.
+>
+> `callback` *[function]* ***optional***: function to be invoked upon successful completion of loading of each specified file. Function is passed a single argument  *[number]* representing the percent of files to have completed loading as a fraction of 1.
+>
 > **Returns:** `Promise`, resolves with `true` upon successful loading of all audio data.
 
 #### `activate()`
 > Activates the playback engine and starts/resumes the underlying `AudioContext`.
-
+>
 > **Returns:** `undefined`
 
 #### `deactivate()`
 > Deactivates the playback engine and suspends the underlying `AudioContext`.
-
+>
 > **Returns:** `undefined`
 
 #### `play()` *\*async\**
 > Transitions playback of audio from current speed and direction or resumes playback from current `playhead` time index to forward playback at `playbackSpeed`.
-
+>
 > **Returns:** `Promise`, resolves with `true` upon successful enqueueing of playback state change audio data.
 
 #### `stop()` *\*async\**
 > Transitions playback of audio from current speed and direction to stop.
-
+>
 > **Returns:** `Promise`, resolves with `true` upon successful enqueueing of playback state change audio data.
 
 #### `rev()` *\*async\**
 > Transitions playback of audio from current speed and direction or resumes playback from current `playhead` time index to reverse playback at `playbackSpeed`.
-
+>
 > **Returns:** `Promise`, resolves with `true` upon successful enqueueing of playback state change audio data.
 
 #### `ff()` *\*async\**
 > Transitions playback of audio from current speed and direction or resumes playback from current `playhead` time index to forward playback at `scrubSpeed`.
-
+>
 > **Returns:** `Promise`, resolves with `true` upon successful enqueueing of playback state change audio data.
 
 #### `rew()` *\*async\**
 > Transitions playback of audio from current speed and direction or resumes playback from current `playhead` time index to reverse playback at `scrubSpeed`.
-
+>
 > **Returns:** `Promise`, resolves with `true` upon successful enqueueing of playback state change audio data.
 
 #### `setPlaybackSpeed(speed)`
 > Sets the playback (forward or reverse) speed to specified value. If invoked during playback, will asynchronously invoke a state change in the playback engine and ramp to the new speed.
-
+>
 > **Arguments:**
-
->> `speed` *[number]*: target playback speed.
-
+>
+> `speed` *[number]*: target playback speed.
+>
 > **Returns:** `undefined`
 
 #### `setScrubSpeed(speed)`
 > Sets the scrub (fast-forward or rewind) speed to specified value. If invoked while scrubbing, will asynchronously invoke a state change in the playback engine and ramp to the new speed.
-
+>
 > **Arguments:**
-
->> `speed` *[number]*: target scrub speed.
-
+>
+> `speed` *[number]*: target scrub speed.
+>
 > **Returns:** `undefined`
 
 #### `setVolume(volume)`
 > Sets the playback volume to specified value. 
-
+>
 > **Arguments:**
-
->> `volume` *[number]*: target volume.
-
+>
+> `volume` *[number]*: target volume.
+>
 > **Returns:** `undefined`
 
 ### Getters:
 
 #### `sampleRate`
-
 > **Returns:** *[number]* the sample rate of the current `AudioContext`.
 
 #### `active`
-
 > **Returns:** *[boolean]* the current active state of the playback engine.
 
 #### `totalSeconds` 
-
 > **Returns:** *[number]* the total length in seconds of all loaded audio content.
 
 #### `playhead`
-
 > **Returns:** *[number]* the current playhead time index in seconds.
 
 #### `lookahead`
-
 > **Returns:** *[number]* the total length in seconds of the playback queue.
 
 #### `latency`
-
 > **Returns:** *[number]* the delay in seconds from when a transport method is invoked to when the playback engine will schedule transitional audio data for playback.
 
 #### `playbackSpeed`
-
 > **Returns:** *[number]* the speed of audio playback while playing (forward or reverse).
 
 #### `scrubSpeed`
-
 > **Returns:** *[number]* the speed of audio playback while scrubbing (fast-forward or reverse).
 
 #### `volume`
-
 > **Returns:** *[number]* the current output gain level.
 
 

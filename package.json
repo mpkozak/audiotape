@@ -1,6 +1,6 @@
 {
   "name": "audiotape",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Audio playback engine that simulates analog audio tape and transport functions.",
   "keywords": [
     "WebAudio",
