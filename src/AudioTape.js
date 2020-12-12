@@ -2,7 +2,7 @@ import {
   Player,
   Loader,
   LoaderLite,
-} from './';
+} from './modules';
 
 
 
