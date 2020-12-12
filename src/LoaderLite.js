@@ -1,6 +1,12 @@
 export default class LoaderLite {
 
 /* ------------------------------------------------------------------ */
+/* Static Properties */
+
+
+
+
+/* ------------------------------------------------------------------ */
 /* Constructor */
 
   constructor(sampleRate = 48e3) {

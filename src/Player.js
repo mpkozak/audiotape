@@ -391,12 +391,11 @@ export default class Player {
   _queue_schedulePendingChunks(ctxTime) {
     if (!this._pendingQueue.length) return null;
     const scheduledChunksFillTarget = ctxTime + this._scheduledSeconds;
-    let lastScheduledChunk = this._scheduledQueue[this._scheduledQueue.length - 1];
-    let lastCtxGain = lastScheduledChunk?.ctxGain ?? 0;
-    let nextStartTime = (
-      lastScheduledChunk?.ctxNextStartTime
-      ?? (ctxTime + this._uiLatency)
-    );
+    let lastScheduledChunk = this._lastScheduledChunk;
+    let lastCtxGain = lastScheduledChunk ? lastScheduledChunk.ctxGain : 0;
+    let nextStartTime = lastScheduledChunk
+      ? lastScheduledChunk.ctxNextStartTime
+      : (ctxTime + this._uiLatency);
     while (nextStartTime < scheduledChunksFillTarget) {
       const nextChunk = this._pendingQueue.shift();
       if (!nextChunk) break;
@@ -413,9 +412,10 @@ export default class Player {
 
 /* repopulate pending queue with new chunks */
   async _queue_refillPendingChunks() {
-    const lastScheduledEndSample = this._scheduledQueue[this._scheduledQueue.length - 1]?.srcEndSample;
+    const lastScheduledChunk = this._lastScheduledChunk;
     const lastPendingChunk = this._pendingQueue[this._pendingQueue.length - 1];
-    if (!lastScheduledEndSample || !lastPendingChunk) return null;
+    if (!lastScheduledChunk || !lastPendingChunk) return null;
+    const lastScheduledEndSample = lastScheduledChunk.srcEndSample;
     const direction = lastPendingChunk.direction;
     const pendingChunksFillTarget = lastScheduledEndSample + (direction * this._pendingSeconds * this._sampleRate);
     const speed = lastPendingChunk.ctxPlaybackSpeed;
@@ -526,7 +526,7 @@ export default class Player {
 
 /* validate nextState object and return null if invalid */
   _transport_validateNextState(nextState = {}) {
-    const nextDirection = nextState?.direction;
+    const nextDirection = nextState.direction;
     switch (true) {
       // no state change, abort
       case Object.entries(nextState).every(([key, val]) => this._state[key] === val):
@@ -541,8 +541,8 @@ export default class Player {
       default:
         return {
           nextDirection,
-          nextPlaying: nextState?.playing,
-          nextScrubbing: nextState?.scrubbing,
+          nextPlaying: nextState.playing,
+          nextScrubbing: nextState.scrubbing,
         };
     };
   };
@@ -595,12 +595,20 @@ export default class Player {
 
 
   _transport_getInitParams() {
-    const lastScheduledChunk = this._scheduledQueue[this._scheduledQueue.length - 1];
+    const lastScheduledChunk = this._lastScheduledChunk;
+    if (!lastScheduledChunk) {
+      return {
+        startSpeed: this._playbackSpeeds.min,
+        startDirection: this._state.direction,
+        srcStartSample: this._state.resumeSample,
+        ctxStartGain: 0,
+      };
+    };
     return {
-      startSpeed: lastScheduledChunk?.ctxPlaybackSpeed ?? this._playbackSpeeds.min,
-      startDirection: lastScheduledChunk?.direction ?? this._state.direction,
-      srcStartSample: lastScheduledChunk?.srcEndSample ?? this._state.resumeSample,
-      ctxStartGain: lastScheduledChunk?.ctxGain ?? 0,
+      startSpeed: lastScheduledChunk.ctxPlaybackSpeed,
+      startDirection: lastScheduledChunk.direction,
+      srcStartSample: lastScheduledChunk.srcEndSample,
+      ctxStartGain: lastScheduledChunk.ctxGain,
     };
   };
 
