@@ -1,11 +1,17 @@
 export default class LoaderLite {
 
 /* ------------------------------------------------------------------ */
+/* Static Properties */
+
+  // chunk cache parameters
+  static ADJACENT_CHUNK_CACHE_LENGTH = 2;
+
+
+
+/* ------------------------------------------------------------------ */
 /* Constructor */
 
   constructor(sampleRate = 48e3) {
-    // STATIC chunk cache parameters
-    this.ADJACENT_CHUNK_CACHE_LENGTH = 2;
     // AudioContext
     this._ctx = new OfflineAudioContext(2, sampleRate, sampleRate);
     // Audio data
@@ -68,8 +74,8 @@ export default class LoaderLite {
     if (this._chunkDataBusy === chunkIndex) return null;
     await this._read_awaitBusy();
     this._chunkDataBusy = chunkIndex;
-    const minIndex = chunkIndex - this.ADJACENT_CHUNK_CACHE_LENGTH;
-    const maxIndex = chunkIndex + this.ADJACENT_CHUNK_CACHE_LENGTH;
+    const minIndex = chunkIndex - this.constructor.ADJACENT_CHUNK_CACHE_LENGTH;
+    const maxIndex = chunkIndex + this.constructor.ADJACENT_CHUNK_CACHE_LENGTH;
     for (let i = 0; i < this._chunkData.length; i++) {
       if (i >= minIndex && i <= maxIndex) {
         if (this._chunkData[i].data === null) {
@@ -97,7 +103,6 @@ export default class LoaderLite {
 
   async _read_awaitBusy() {
     while (this._chunkDataBusy !== false) {
-      console.log('waiting for chunkdatabusy')
       await new Promise(res => setTimeout(res, 16));
     };
     return true;

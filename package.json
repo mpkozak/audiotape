@@ -13,13 +13,11 @@
     "name": "M. Parker Kozak",
     "url": "https://kozak.digital"
   },
-  "main": "dist/index.js",
+  "main": "src/index.js",
   "browser": "dist/index.js",
-  "module": "dist/index.js",
   "scripts": {
     "build": "npx babel src --out-dir dist",
-    "start": "npx babel src --watch --out-dir dist",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "npx babel src --watch --out-dir dist"
   },
   "repository": {
     "type": "git",
@@ -28,6 +26,8 @@
   "devDependencies": {
     "@babel/cli": "^7.12.10",
     "@babel/core": "^7.12.10",
+    "@babel/plugin-proposal-class-properties": "^7.12.1",
+    "@babel/plugin-transform-runtime": "^7.12.10",
     "@babel/preset-env": "^7.12.10"
   }
 }

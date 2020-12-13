@@ -1,9 +1,86 @@
 export default class Player {
 
 /* ------------------------------------------------------------------ */
-/* "Static" Methods */
+/* Private fields */
 
-  _calcRampChunkSamples(sampleRate, targetRampChunkSeconds) {
+  #ctx;
+  #masterGain;
+  #bufferGain;
+  #sampleRate;
+  #rampChunkSamples;
+  #chunkSamples;
+  #lookaheadSeconds
+  #scheduledSeconds;
+  #pendingSeconds;
+  #uiLatency;
+  #playbackSpeeds;
+  #state;
+  #scheduledQueue;
+  #pendingQueue;
+  #tickInterval;
+  #tickTimeout;
+  #tickCb;
+  #Loader;
+  #totalSamples;
+  #totalSeconds;
+
+
+
+/* ------------------------------------------------------------------ */
+/* Static Properties */
+
+  // default constructor argument parameter values
+  static DEFAULT_SAMPLE_RATE = 48e3;
+  static DEFAULT_CHUNK_LENGTH = .02;
+  static DEFAULT_LOOKAHEAD = 5;
+  static DEFAULT_LATENCY = .1;
+  static DEFAULT_PLAYBACK_SPEED = 1;
+  static DEFAULT_SCRUB_SPEED = 8;
+
+  // minimum parameter values
+  static MIN_LOOKAHEAD_SECONDS = 1;
+  static MIN_SCHEDULED_SECONDS = .1;
+  static MIN_PLAYBACK_SPEED = .1;
+
+  // chunk sample size constants
+  static KBIN_SAMPLES = 128;
+  static MIN_RAMP_CHUNK_KBINS = 4;
+
+  // pre-defined parameter objects for transport state changes
+  static TRANSPORT = {
+    play: {
+      playing: 1,
+      scrubbing: 0,
+      direction: 1,
+    },
+    stop: {
+      playing: 0,
+      scrubbing: 0,
+      direction: 1,
+    },
+    rev: {
+      playing: 1,
+      scrubbing: 0,
+      direction: -1,
+    },
+    ff: {
+      playing: 1,
+      scrubbing: 1,
+      direction: 1,
+    },
+    rew: {
+      playing: 1,
+      scrubbing: 1,
+      direction: -1,
+    },
+  };
+
+
+
+/* ------------------------------------------------------------------ */
+/* Static Methods */
+
+  static calcRampChunkSamples(sampleRate, targetRampChunkSeconds) {
     const targetRampChunkSamples = Math.floor(sampleRate * targetRampChunkSeconds);
     const targetRampChunkKBins = Math.round(targetRampChunkSamples / this.KBIN_SAMPLES);
     const rampChunkKBins = Math.max(this.MIN_RAMP_CHUNK_KBINS, targetRampChunkKBins);
@@ -11,18 +88,18 @@ export default class Player {
     return rampChunkSamples;
   };
 
-  _clampMinValidNumber(val, minVal) {
+  static clampMinValidNumber(val, minVal) {
     if (typeof val === 'number' && val >= minVal) {
       return val;
     };
     return minVal;
-  }
+  };
 
-  _calcRampDuration(startSpeed, endSpeed) {
+  static calcRampDuration(startSpeed, endSpeed) {
     return Math.sqrt(Math.abs(startSpeed - endSpeed));
   };
 
-  _parseLoadSrc(src) {
+  static parseLoadSrc(src) {
     if (Array.isArray(src)) {
       if (!src.every(url => typeof url === 'string')) {
         throw new TypeError('Source URLs must be strings');
@@ -41,7 +118,7 @@ export default class Player {
 /* Getters */
 
   get sampleRate() {
-    return this._sampleRate;
+    return this.#sampleRate;
   };
 
   get active() {
@@ -49,39 +126,39 @@ export default class Player {
   };
 
   get totalSeconds() {
-    return this._totalSeconds;
+    return this.#totalSeconds;
   };
 
   get playhead() {
-    if (!this._scheduledQueue.length) {
-      return this._state.resumeSample / this._sampleRate;
+    if (!this.#scheduledQueue.length) {
+      return this.#state.resumeSample / this.#sampleRate;
     };
-    const nowChunk = this._scheduledQueue[0];
+    const nowChunk = this.#scheduledQueue[0];
     const elapsedSeconds = (
-      (this._ctx.currentTime - nowChunk.ctxStartTime)
+      (this.#ctx.currentTime - nowChunk.ctxStartTime)
       * (nowChunk.ctxPlaybackSpeed * nowChunk.direction)
     );
     return nowChunk.srcStartSeconds + elapsedSeconds;
   };
 
   get lookahead() {
-    return this._lookaheadSeconds;
+    return this.#lookaheadSeconds;
   };
 
   get latency() {
-    return this._scheduledSeconds;
+    return this.#scheduledSeconds;
   };
 
   get playbackSpeed() {
-    return this._playbackSpeeds.base;
+    return this.#playbackSpeeds.base;
   };
 
   get scrubSpeed() {
-    return this._playbackSpeeds.scrub;
+    return this.#playbackSpeeds.scrub;
   };
 
   get volume() {
-    return this._masterGain.gain.value;
+    return this.#masterGain.gain.value;
   };
 
 
@@ -90,19 +167,19 @@ export default class Player {
 /* Private Getters */
 
   get _ctxActive() {
-    return this._ctx.state === 'running';
+    return this.#ctx.state === 'running';
   };
 
   get _engineActive() {
-    return !!this._tickTimeout;
+    return !!this.#tickTimeout;
   };
 
   get _lastScheduledChunk() {
-    return this._scheduledQueue[this._scheduledQueue.length - 1];
+    return this.#scheduledQueue[this.#scheduledQueue.length - 1];
   };
 
   get _gainNode() {
-    return this._masterGain;
+    return this.#masterGain;
   };
 
 
@@ -111,46 +188,46 @@ export default class Player {
 /* Setters */
 
   set lookahead(seconds) {
-    this._lookaheadSeconds = this._clampMinValidNumber(seconds, this.MIN_LOOKAHEAD_SECONDS);
-    this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
+    this.#lookaheadSeconds = this.constructor.clampMinValidNumber(seconds, this.constructor.MIN_LOOKAHEAD_SECONDS);
+    this.#pendingSeconds = (this.#lookaheadSeconds - this.#scheduledSeconds);
   };
 
   set latency(seconds) {
-    this._scheduledSeconds = this._clampMinValidNumber(seconds, this.MIN_SCHEDULED_SECONDS);
-    this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
-    this._uiLatency = (this._scheduledSeconds / 5);
+    this.#scheduledSeconds = this.constructor.clampMinValidNumber(seconds, this.constructor.MIN_SCHEDULED_SECONDS);
+    this.#pendingSeconds = (this.#lookaheadSeconds - this.#scheduledSeconds);
+    this.#uiLatency = (this.#scheduledSeconds / 5);
   };
 
   set playbackSpeed(speed) {
-    this._playbackSpeeds.base = this._clampSpeed(speed);
-    if (!this._state.busy && !this._state.scrubbing && this._state.playing) {
-      if (this._state.direction === 1) {
-        this._transport_setState({ delta: true, ...this.TRANSPORT.play});
+    this.#playbackSpeeds.base = this._clampSpeed(speed);
+    if (!this.#state.busy && !this.#state.scrubbing && this.#state.playing) {
+      if (this.#state.direction === 1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.play});
       };
-      if (this._state.direction === -1) {
-        this._transport_setState({ delta: true, ...this.TRANSPORT.rev});
+      if (this.#state.direction === -1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.rev});
       };
     };
   };
 
   set scrubSpeed(speed) {
-    this._playbackSpeeds.scrub = this._clampSpeed(speed);
-    if (!this._state.busy && this._state.scrubbing && this._state.playing) {
-      if (this._state.direction === 1) {
-        this._transport_setState({ delta: true, ...this.TRANSPORT.ff});
+    this.#playbackSpeeds.scrub = this._clampSpeed(speed);
+    if (!this.#state.busy && this.#state.scrubbing && this.#state.playing) {
+      if (this.#state.direction === 1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.ff});
       };
-      if (this._state.direction === -1) {
-        this._transport_setState({ delta: true, ...this.TRANSPORT.rew});
+      if (this.#state.direction === -1) {
+        this._transport_setState({ delta: true, ...this.constructor.TRANSPORT.rew});
       };
     };
   };
 
   set volume(val) {
-    const safeVal = this._clampMinValidNumber(val, 0);
-    const now = this._ctx.currentTime;
-    const rampEnd = now + this._uiLatency;
-    this._masterGain.gain.cancelScheduledValues(now);
-    this._masterGain.gain.linearRampToValueAtTime(safeVal, rampEnd);
+    const safeVal = this.constructor.clampMinValidNumber(val, 0);
+    const now = this.#ctx.currentTime;
+    const rampEnd = now + this.#uiLatency;
+    this.#masterGain.gain.cancelScheduledValues(now);
+    this.#masterGain.gain.linearRampToValueAtTime(safeVal, rampEnd);
   };
 
 
@@ -160,81 +237,38 @@ export default class Player {
 
   constructor({
     /* fixed at instantiation */
-    sampleRate = 48e3,
-    chunkLength = .02,
+    sampleRate = this.constructor.DEFAULT_SAMPLE_RATE,
+    chunkLength = this.constructor.DEFAULT_CHUNK_LENGTH,
     /* can change via setters */
-    lookahead = 5,
-    latency = .1,
-    playbackSpeed = 1,
-    scrubSpeed = 8,
+    lookahead = this.constructor.DEFAULT_LOOKAHEAD,
+    latency = this.constructor.DEFAULT_LATENCY,
+    playbackSpeed = this.constructor.DEFAULT_PLAYBACK_SPEED,
+    scrubSpeed = this.constructor.DEFAULT_SCRUB_SPEED,
     Loader,
   } = {}) {
-    // STATIC default constructor argument parameter values
-    this.DEFAULT_SAMPLE_RATE = 48e3;
-    this.DEFAULT_CHUNK_LENGTH = .02;
-    this.DEFAULT_LOOKAHEAD = 5;
-    this.DEFAULT_LATENCY = .1;
-    this.DEFAULT_PLAYBACK_SPEED = 1;
-    this.DEFAULT_SCRUB_SPEED = 5;
-    // STATIC minimum parameter values
-    this.MIN_LOOKAHEAD_SECONDS = 1;
-    this.MIN_SCHEDULED_SECONDS = .1;
-    this.MIN_PLAYBACK_SPEED = .1;
-    // STATIC chunk sample size constants
-    this.KBIN_SAMPLES = 128;
-    this.MIN_RAMP_CHUNK_KBINS = 4;
-    // STATIC pre-defined parameter objects for transport state changes
-    this.TRANSPORT = {
-      play: {
-        playing: 1,
-        scrubbing: 0,
-        direction: 1,
-      },
-      stop: {
-        playing: 0,
-        scrubbing: 0,
-        direction: 1,
-      },
-      rev: {
-        playing: 1,
-        scrubbing: 0,
-        direction: -1,
-      },
-      ff: {
-        playing: 1,
-        scrubbing: 1,
-        direction: 1,
-      },
-      rew: {
-        playing: 1,
-        scrubbing: 1,
-        direction: -1,
-      },
-    };
-    // AudioContext
-    this._ctx = new AudioContext({ sampleRate });
+    this.#ctx = new AudioContext({ sampleRate });
     // GainNode instantiation
-    this._masterGain = this._ctx.createGain();
-    this._masterGain.connect(this._ctx.destination);
-    this._masterGain.gain.value = 1;
-    this._bufferGain = this._ctx.createGain();
-    this._bufferGain.connect(this._masterGain);
-    this._bufferGain.gain.value = 0;
+    this.#masterGain = this.#ctx.createGain();
+    this.#masterGain.connect(this.#ctx.destination);
+    this.#masterGain.gain.value = 1;
+    this.#bufferGain = this.#ctx.createGain();
+    this.#bufferGain.connect(this.#masterGain);
+    this.#bufferGain.gain.value = 0;
     // Engine timing constants
-    this._sampleRate = this._ctx.sampleRate;
-    this._rampChunkSamples = this._calcRampChunkSamples(this._sampleRate, chunkLength);
-    this._chunkSamples = this._rampChunkSamples * 2;
-    this._lookaheadSeconds = this._clampMinValidNumber(lookahead, this.MIN_LOOKAHEAD_SECONDS);
-    this._scheduledSeconds = this._clampMinValidNumber(latency, this.MIN_SCHEDULED_SECONDS);
-    this._pendingSeconds = (this._lookaheadSeconds - this._scheduledSeconds);
-    this._uiLatency = (this._scheduledSeconds / 5);
-    this._playbackSpeeds = {
+    this.#sampleRate = this.#ctx.sampleRate;
+    this.#rampChunkSamples = this.constructor.calcRampChunkSamples(this.#sampleRate, chunkLength);
+    this.#chunkSamples = this.#rampChunkSamples * 2;
+    this.#lookaheadSeconds = this.constructor.clampMinValidNumber(lookahead, this.constructor.MIN_LOOKAHEAD_SECONDS);
+    this.#scheduledSeconds = this.constructor.clampMinValidNumber(latency, this.constructor.MIN_SCHEDULED_SECONDS);
+    this.#pendingSeconds = (this.#lookaheadSeconds - this.#scheduledSeconds);
+    this.#uiLatency = (this.#scheduledSeconds / 5);
+    this.#playbackSpeeds = {
       base: this._clampSpeed(playbackSpeed),
-      min: this._clampSpeed(this.MIN_PLAYBACK_SPEED),
+      min: this._clampSpeed(this.constructor.MIN_PLAYBACK_SPEED),
       scrub: this._clampSpeed(scrubSpeed),
     };
     // Engine state
-    this._state = {
+    this.#state = {
       resumeSample: 0,
       playing: 0,
       scrubbing: 0,
@@ -242,16 +276,16 @@ export default class Player {
       busy: false,
     };
     // Engine queues
-    this._scheduledQueue = [];
-    this._pendingQueue = [];
+    this.#scheduledQueue = [];
+    this.#pendingQueue = [];
     // Engine runtime
-    this._tickInterval = (this._rampChunkSamples / this._sampleRate) * 1e3;
-    this._tickTimeout = null;
-    this._tickCb = this._tick.bind(this);
+    this.#tickInterval = (this.#rampChunkSamples / this.#sampleRate) * 1e3;
+    this.#tickTimeout = null;
+    this.#tickCb = this._tick.bind(this);
     // Loader + metadata
-    this._Loader = new Loader(this._sampleRate);
-    this._totalSamples = 0;
-    this._totalSeconds = 0;
+    this.#Loader = new Loader(this.#sampleRate);
+    this.#totalSamples = 0;
+    this.#totalSeconds = 0;
     // Public engine methods
     this.load = this._load.bind(this);
     this.activate = this._activate.bind(this);
@@ -270,27 +304,27 @@ export default class Player {
 /* Public Engine Methods */
 
   async _load(src, ...args) {
-    const safeSrc = this._parseLoadSrc(src);
-    this._totalSamples = await this._Loader.load(safeSrc, ...args);
-    this._totalSeconds = this._totalSamples / this._sampleRate;
+    const safeSrc = this.constructor.parseLoadSrc(src);
+    this.#totalSamples = await this.#Loader.load(safeSrc, ...args);
+    this.#totalSeconds = this.#totalSamples / this.#sampleRate;
     return true;
   };
 
   _activate() {
     if (!this._ctxActive) {
-      this._ctx.resume();
+      this.#ctx.resume();
     };
     if (!this._engineActive) {
-      this._tickCb();
+      this.#tickCb();
     };
   };
 
   _deactivate() {
     if (this._ctxActive) {
-      this._ctx.suspend();
+      this.#ctx.suspend();
     };
     if (this._engineActive) {
-      clearTimeout(this._tickTimeout);
+      clearTimeout(this.#tickTimeout);
     };
   };
 
@@ -300,27 +334,27 @@ export default class Player {
 /* Public Transport Methods */
 
   async _play() {
-    await this._transport_setState(this.TRANSPORT.play);
+    await this._transport_setState(this.constructor.TRANSPORT.play);
     return true;
   };
 
   async _stop() {
-    await this._transport_setState(this.TRANSPORT.stop);
+    await this._transport_setState(this.constructor.TRANSPORT.stop);
     return true;
   };
 
   async _rev() {
-    await this._transport_setState(this.TRANSPORT.rev);
+    await this._transport_setState(this.constructor.TRANSPORT.rev);
     return true;
   };
 
   async _ff() {
-    await this._transport_setState(this.TRANSPORT.ff);
+    await this._transport_setState(this.constructor.TRANSPORT.ff);
     return true;
   };
 
   async _rew() {
-    await this._transport_setState(this.TRANSPORT.rew);
+    await this._transport_setState(this.constructor.TRANSPORT.rew);
     return true;
   };
 
@@ -331,7 +365,7 @@ export default class Player {
 
   async _tick() {
     await this._queue_tick();
-    this._tickTimeout = setTimeout(this._tickCb, this._tickInterval);
+    this.#tickTimeout = setTimeout(this.#tickCb, this.#tickInterval);
   };
 
 
@@ -341,11 +375,11 @@ export default class Player {
 
 /* queue runtime */
   async _queue_tick() {
-    if (this._state.busy) return null;
-    const currentTime = this._ctx.currentTime;
+    if (this.#state.busy) return null;
+    const currentTime = this.#ctx.currentTime;
     this._queue_clearScheduledHead(currentTime);
     this._queue_schedulePendingChunks(currentTime);
-    if (this._state.playing === 1) {
+    if (this.#state.playing === 1) {
       await this._queue_refillPendingChunks();
     };
   };
@@ -353,13 +387,13 @@ export default class Player {
 
 /* remove chunks that have finished playing from top of scheduled queue */
   _queue_clearScheduledHead(ctxTime) {
-    if (!this._scheduledQueue.length) return null;
-    let currentScheduledChunk = this._scheduledQueue[0];
+    if (!this.#scheduledQueue.length) return null;
+    let currentScheduledChunk = this.#scheduledQueue[0];
     let nextStartTime = currentScheduledChunk.ctxNextStartTime;
     while (nextStartTime < ctxTime) {
-      this._state.resumeSample = currentScheduledChunk.srcEndSample;
-      this._scheduledQueue.shift();
-      currentScheduledChunk = this._scheduledQueue[0];
+      this.#state.resumeSample = currentScheduledChunk.srcEndSample;
+      this.#scheduledQueue.shift();
+      currentScheduledChunk = this.#scheduledQueue[0];
       if (!currentScheduledChunk) break;
       nextStartTime = currentScheduledChunk.ctxNextStartTime;
     };
@@ -372,10 +406,10 @@ export default class Player {
     chunk.node.playbackRate.value = chunk.ctxPlaybackSpeed;
     chunk.ctxStartTime = this._clampClock(startTime);
     chunk.ctxLengthSeconds = (
-      (chunk.srcLengthSamples / this._sampleRate) / chunk.node.playbackRate.value
+      (chunk.srcLengthSamples / this.#sampleRate) / chunk.node.playbackRate.value
     );
     chunk.ctxNextStartTime = chunk.ctxStartTime + chunk.ctxLengthSeconds;
-    chunk.node.connect(this._bufferGain);
+    chunk.node.connect(this.#bufferGain);
     chunk.node.start(chunk.ctxStartTime, 0);
     return chunk;
   };
@@ -383,24 +417,22 @@ export default class Player {
 
 /* schedule gain change */
   _queue_scheduleGain(ctxEndTime, targetVal) {
-    this._bufferGain.gain.linearRampToValueAtTime(targetVal, ctxEndTime);
+    this.#bufferGain.gain.linearRampToValueAtTime(targetVal, ctxEndTime);
   };
 
 
 /* schedule chunks and shift from pending to scheduled */
   _queue_schedulePendingChunks(ctxTime) {
-    if (!this._pendingQueue.length) return null;
-    const scheduledChunksFillTarget = ctxTime + this._scheduledSeconds;
+    if (!this.#pendingQueue.length) return null;
+    const scheduledChunksFillTarget = ctxTime + this.#scheduledSeconds;
     let lastScheduledChunk = this._lastScheduledChunk;
-    let lastCtxGain = lastScheduledChunk ? lastScheduledChunk.ctxGain : 0;
-    let nextStartTime = lastScheduledChunk
-      ? lastScheduledChunk.ctxNextStartTime
-      : (ctxTime + this._uiLatency);
+    let lastCtxGain = lastScheduledChunk?.ctxGain ?? 0;
+    let nextStartTime = lastScheduledChunk?.ctxNextStartTime ?? (ctxTime + this.#uiLatency);
     while (nextStartTime < scheduledChunksFillTarget) {
-      const nextChunk = this._pendingQueue.shift();
+      const nextChunk = this.#pendingQueue.shift();
       if (!nextChunk) break;
       lastScheduledChunk = this._queue_scheduleChunk(nextChunk, nextStartTime);
-      this._scheduledQueue.push(lastScheduledChunk);
+      this.#scheduledQueue.push(lastScheduledChunk);
       if (lastCtxGain !== lastScheduledChunk.ctxGain) {
         this._queue_scheduleGain(lastScheduledChunk.ctxNextStartTime, lastScheduledChunk.ctxGain);
       };
@@ -412,12 +444,11 @@ export default class Player {
 
 /* repopulate pending queue with new chunks */
   async _queue_refillPendingChunks() {
-    const lastScheduledChunk = this._lastScheduledChunk;
-    const lastPendingChunk = this._pendingQueue[this._pendingQueue.length - 1];
-    if (!lastScheduledChunk || !lastPendingChunk) return null;
-    const lastScheduledEndSample = lastScheduledChunk.srcEndSample;
+    const lastScheduledEndSample = this._lastScheduledChunk?.srcEndSample;
+    const lastPendingChunk = this.#pendingQueue[this.#pendingQueue.length - 1];
+    if (!lastScheduledEndSample || !lastPendingChunk) return null;
     const direction = lastPendingChunk.direction;
-    const pendingChunksFillTarget = lastScheduledEndSample + (direction * this._pendingSeconds * this._sampleRate);
+    const pendingChunksFillTarget = lastScheduledEndSample + (direction * this.#pendingSeconds * this.#sampleRate);
     const speed = lastPendingChunk.ctxPlaybackSpeed;
     const test = (direction < 0)
       ? () => (nextStartSample > pendingChunksFillTarget)
@@ -426,17 +457,17 @@ export default class Player {
     let nextStartSample = nextChunk.srcEndSample;
     while (test()) {
       const startSample = nextStartSample;
-      nextStartSample += this._chunkSamples * direction;
+      nextStartSample += this.#chunkSamples * direction;
       nextChunk = await this._chunk_create(startSample, nextStartSample, speed);
       if (!nextChunk) break;
-      this._pendingQueue.push(nextChunk);
+      this.#pendingQueue.push(nextChunk);
     };
   };
 
 
 /* depopulate pending queue */
   _queue_clearPending() {
-    this._pendingQueue.splice(0, this._pendingQueue.length);
+    this.#pendingQueue.splice(0, this.#pendingQueue.length);
   };
 
 
@@ -451,10 +482,10 @@ export default class Player {
       if (!clamped) return null;
       const buffer = await this._chunk_getBuffer(clamped.start, clamped.end);
       return {
-        node: this._ctx.createBufferSource(),
+        node: this.#ctx.createBufferSource(),
         buffer: buffer,
         direction: (clamped.start < clamped.end) ? 1 : -1,
-        srcStartSeconds: clamped.start / this._sampleRate,
+        srcStartSeconds: clamped.start / this.#sampleRate,
         srcStartSample: clamped.start,
         srcEndSample: clamped.end,
         srcLengthSamples: clamped.srcLengthSamples,
@@ -489,13 +520,13 @@ export default class Player {
   async _chunk_getBuffer(startSample, endSample) {
     let buffer;
     if (endSample < startSample) {
-      buffer = this._ctx.createBuffer(2, startSample - endSample, this._sampleRate);
-      buffer.copyToChannel(await this._Loader.getReverseSampleDataByChannel(0, endSample, startSample), 0, 0);
-      buffer.copyToChannel(await this._Loader.getReverseSampleDataByChannel(1, endSample, startSample), 1, 0);
+      buffer = this.#ctx.createBuffer(2, startSample - endSample, this.#sampleRate);
+      buffer.copyToChannel(await this.#Loader.getReverseSampleDataByChannel(0, endSample, startSample), 0, 0);
+      buffer.copyToChannel(await this.#Loader.getReverseSampleDataByChannel(1, endSample, startSample), 1, 0);
     } else {
-      buffer = this._ctx.createBuffer(2, endSample - startSample, this._sampleRate);
-      buffer.copyToChannel(await this._Loader.getSampleDataByChannel(0, startSample, endSample), 0, 0);
-      buffer.copyToChannel(await this._Loader.getSampleDataByChannel(1, startSample, endSample), 1, 0);
+      buffer = this.#ctx.createBuffer(2, endSample - startSample, this.#sampleRate);
+      buffer.copyToChannel(await this.#Loader.getSampleDataByChannel(0, startSample, endSample), 0, 0);
+      buffer.copyToChannel(await this.#Loader.getSampleDataByChannel(1, startSample, endSample), 1, 0);
     };
     return buffer;
   };
@@ -509,15 +540,15 @@ export default class Player {
     const validNextState = this._transport_validateNextState(nextState);
     if (!validNextState) return null;
     await this._transport_awaitBusyState();
-    this._state.busy = true;
+    this.#state.busy = true;
     await this._transport_scheduleDeltaChunks(validNextState);
     this._transport_applyNextState(validNextState);
-    this._state.busy = false;
+    this.#state.busy = false;
   };
 
 
   async _transport_awaitBusyState() {
-    while (this._state.busy === true) {
+    while (this.#state.busy === true) {
       await new Promise(res => setTimeout(res, 16));
     };
     return true;
@@ -526,23 +557,23 @@ export default class Player {
 
 /* validate nextState object and return null if invalid */
   _transport_validateNextState(nextState = {}) {
-    const nextDirection = nextState.direction;
+    const nextDirection = nextState?.direction;
     switch (true) {
       // no state change, abort
-      case Object.entries(nextState).every(([key, val]) => this._state[key] === val):
+      case Object.entries(nextState).every(([key, val]) => this.#state[key] === val):
         return null;
       // attempting to play reverse past zero, abort
-      case ((this._state.resumeSample <= 0) && (nextDirection !== 1)):
+      case ((this.#state.resumeSample <= 0) && (nextDirection !== 1)):
         return null;
       // attempting to play past the end, abort
-      case ((this._state.resumeSample >= this._totalSamples) && (nextDirection !== -1)):
+      case ((this.#state.resumeSample >= this.#totalSamples) && (nextDirection !== -1)):
         return null;
       // valid nextState, return nextState params object
       default:
         return {
           nextDirection,
-          nextPlaying: nextState.playing,
-          nextScrubbing: nextState.scrubbing,
+          nextPlaying: nextState?.playing,
+          nextScrubbing: nextState?.scrubbing,
         };
     };
   };
@@ -550,9 +581,9 @@ export default class Player {
 
 /* assign nextState values to state */
   _transport_applyNextState(nextState = {}) {
-    this._state.direction = nextState.nextDirection;
-    this._state.scrubbing = nextState.nextScrubbing;
-    this._state.playing = nextState.nextPlaying;
+    this.#state.direction = nextState.nextDirection;
+    this.#state.scrubbing = nextState.nextScrubbing;
+    this.#state.playing = nextState.nextPlaying;
   };
 
 
@@ -575,17 +606,17 @@ export default class Player {
         endSpeed: endSpeed,
         srcStartSample: srcStartSample,
         direction: nextDirection,
-        ignoreGain: (startSpeed !== this._playbackSpeeds.min) && (endSpeed !== this._playbackSpeeds.min),
+        ignoreGain: (startSpeed !== this.#playbackSpeeds.min) && (endSpeed !== this.#playbackSpeeds.min),
       });
     } else {    // change directions
       const midSample = await this._transport_pushRamp({
         startSpeed: startSpeed,
-        endSpeed: this._playbackSpeeds.min,
+        endSpeed: this.#playbackSpeeds.min,
         srcStartSample: srcStartSample,
         direction: startDirection,
       });
       await this._transport_pushRamp({
-        startSpeed: this._playbackSpeeds.min,
+        startSpeed: this.#playbackSpeeds.min,
         endSpeed: endSpeed,
         srcStartSample: midSample ? midSample : srcStartSample,
         direction: nextDirection,
@@ -596,31 +627,23 @@ export default class Player {
 
   _transport_getInitParams() {
     const lastScheduledChunk = this._lastScheduledChunk;
-    if (!lastScheduledChunk) {
-      return {
-        startSpeed: this._playbackSpeeds.min,
-        startDirection: this._state.direction,
-        srcStartSample: this._state.resumeSample,
-        ctxStartGain: 0,
-      };
-    };
     return {
-      startSpeed: lastScheduledChunk.ctxPlaybackSpeed,
-      startDirection: lastScheduledChunk.direction,
-      srcStartSample: lastScheduledChunk.srcEndSample,
-      ctxStartGain: lastScheduledChunk.ctxGain,
+      startSpeed: lastScheduledChunk?.ctxPlaybackSpeed ?? this.#playbackSpeeds.min,
+      startDirection: lastScheduledChunk?.direction ?? this.#state.direction,
+      srcStartSample: lastScheduledChunk?.srcEndSample ?? this.#state.resumeSample,
+      ctxStartGain: lastScheduledChunk?.ctxGain ?? 0,
     };
   };
 
 
   _transport_calcEndSpeed(nextPlaying, nextScrubbing) {
-    let endSpeed = this._playbackSpeeds.min;
+    let endSpeed = this.#playbackSpeeds.min;
     if (nextPlaying === 1) {
       if (nextScrubbing === 1) {
-        endSpeed = this._playbackSpeeds.scrub;
+        endSpeed = this.#playbackSpeeds.scrub;
       };
       if (nextScrubbing === 0) {
-        endSpeed = this._playbackSpeeds.base;
+        endSpeed = this.#playbackSpeeds.base;
       };
     };
     return endSpeed;
@@ -645,7 +668,7 @@ export default class Player {
       if (!ignoreGain) {
         chunk.ctxGain = gain;
       };
-      this._pendingQueue.push(chunk);
+      this.#pendingQueue.push(chunk);
       if (!rampChunkParams.length) {
         return chunk.srcEndSample;
       };
@@ -659,8 +682,8 @@ export default class Player {
     let nextSpeed = startSpeed;
     while (true) {
       const speed = this._clampSpeed(nextSpeed);
-      const gain = Math.max(0, Math.min(1, speed - this._playbackSpeeds.min));
-      const lengthSrcSamples = this._rampChunkSamples * speed;
+      const gain = Math.max(0, Math.min(1, speed - this.#playbackSpeeds.min));
+      const lengthSrcSamples = this.#rampChunkSamples * speed;
       rampChunkParams.push({ speed, lengthSrcSamples, gain });
       if (speed === endSpeed) break;
       if (Math.abs(endSpeed - nextSpeed) < Math.abs(speedStep)) {
@@ -674,9 +697,9 @@ export default class Player {
 
 
   _transport_calcRampSpeedStep(startSpeed, endSpeed) {
-    const lengthSeconds = this._calcRampDuration(startSpeed, endSpeed);
-    const lengthSamples = lengthSeconds * this._sampleRate;
-    const lengthRampChunks = Math.floor(lengthSamples / this._rampChunkSamples);
+    const lengthSeconds = this.constructor.calcRampDuration(startSpeed, endSpeed);
+    const lengthSamples = lengthSeconds * this.#sampleRate;
+    const lengthRampChunks = Math.floor(lengthSamples / this.#rampChunkSamples);
     const speedDelta = endSpeed - startSpeed;
     return speedDelta / lengthRampChunks;
   };
@@ -688,18 +711,18 @@ export default class Player {
 
 /* clamp seconds value to whole-sample equivalent float */
   _clampClock(seconds) {
-    const timeSamples = seconds * this._sampleRate;
+    const timeSamples = seconds * this.#sampleRate;
     const timeSamplesWhole = Math.round(timeSamples);
-    return timeSamplesWhole / this._sampleRate;
+    return timeSamplesWhole / this.#sampleRate;
   };
 
 
 /* clamp speed value to whole-sample equivalent float */
   _clampSpeed(speed) {
-    const safeSpeed = this._clampMinValidNumber(speed, this.MIN_PLAYBACK_SPEED);
-    const srcChunkSamples = this._rampChunkSamples * safeSpeed;
+    const safeSpeed = this.constructor.clampMinValidNumber(speed, this.constructor.MIN_PLAYBACK_SPEED);
+    const srcChunkSamples = this.#rampChunkSamples * safeSpeed;
     const targetSrcChunkSamples = Math.round(srcChunkSamples);
-    const targetSpeed = (targetSrcChunkSamples / this._rampChunkSamples);
+    const targetSpeed = (targetSrcChunkSamples / this.#rampChunkSamples);
     return targetSpeed;
   };
 
@@ -709,8 +732,8 @@ export default class Player {
     if (sample < 0) {
       return 0;
     };
-    if (sample >= this._totalSamples) {
-      return this._totalSamples;
+    if (sample >= this.#totalSamples) {
+      return this.#totalSamples;
     };
     return parseInt(sample, 10);
   };

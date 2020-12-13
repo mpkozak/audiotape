@@ -9,42 +9,49 @@ import {
 export default class AudioTape {
 
 /* ------------------------------------------------------------------ */
+/* Private fields */
+
+  #Player;
+
+
+
+/* ------------------------------------------------------------------ */
 /* Getters */
 
   get sampleRate() {
-    return this._Player.sampleRate;
+    return this.#Player.sampleRate;
   };
 
   get active() {
-    return this._Player.active;
+    return this.#Player.active;
   };
 
   get totalSeconds() {
-    return this._Player.totalSeconds;
+    return this.#Player.totalSeconds;
   };
 
   get playhead() {
-    return this._Player.playhead;
+    return this.#Player.playhead;
   };
 
   get lookahead() {
-    return this._Player.lookahead;
+    return this.#Player.lookahead;
   };
 
   get latency() {
-    return this._Player.latency;
+    return this.#Player.latency;
   };
 
   get playbackSpeed() {
-    return this._Player.playbackSpeed;
+    return this.#Player.playbackSpeed;
   };
 
   get scrubSpeed() {
-    return this._Player.scrubSpeed;
+    return this.#Player.scrubSpeed;
   };
 
   get volume() {
-    return this._Player.volume;
+    return this.#Player.volume;
   };
 
 
@@ -62,7 +69,7 @@ export default class AudioTape {
     LOW_MEMORY_MODE = false,
   } = {}) {
     // Player class instance
-    this._Player = new Player({
+    this.#Player = new Player({
       sampleRate,
       chunkLength,
       lookahead,
@@ -72,15 +79,15 @@ export default class AudioTape {
       Loader: LOW_MEMORY_MODE ? LoaderLite : Loader,
     });
     // Public engine methods
-    this.load = this._Player.load;
-    this.activate = this._Player.activate;
-    this.deactivate = this._Player.deactivate;
+    this.load = this.#Player.load;
+    this.activate = this.#Player.activate;
+    this.deactivate = this.#Player.deactivate;
     // Public transport methods
-    this.play = this._Player.play;
-    this.stop = this._Player.stop;
-    this.rev = this._Player.rev;
-    this.ff = this._Player.ff;
-    this.rew = this._Player.rew;
+    this.play = this.#Player.play;
+    this.stop = this.#Player.stop;
+    this.rev = this.#Player.rev;
+    this.ff = this.#Player.ff;
+    this.rew = this.#Player.rew;
     // Public configuration methods
     this.setPlaybackSpeed = this._setPlaybackSpeed.bind(this);
     this.setScrubSpeed = this._setScrubSpeed.bind(this);
@@ -93,15 +100,15 @@ export default class AudioTape {
 /* Public Configuration Methods */
 
   _setPlaybackSpeed(speed) {
-    this._Player.playbackSpeed = speed;
+    this.#Player.playbackSpeed = speed;
   };
 
   _setScrubSpeed(speed) {
-    this._Player.scrubSpeed = speed;
+    this.#Player.scrubSpeed = speed;
   };
 
   _setVolume(val) {
-    this._Player.volume = val;
+    this.#Player.volume = val;
   };
 
 
