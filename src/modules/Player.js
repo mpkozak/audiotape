@@ -32,7 +32,7 @@ export default class Player {
   // default constructor argument parameter values
   static DEFAULT_SAMPLE_RATE = 48e3;
   static DEFAULT_CHUNK_LENGTH = .02;
-  static DEFAULT_LOOKAHEAD = 5;
+  static DEFAULT_LOOKAHEAD = 10;
   static DEFAULT_LATENCY = .1;
   static DEFAULT_PLAYBACK_SPEED = 1;
   static DEFAULT_SCRUB_SPEED = 8;
@@ -176,6 +176,10 @@ export default class Player {
 
   get _lastScheduledChunk() {
     return this.#scheduledQueue[this.#scheduledQueue.length - 1];
+  };
+
+  get _lastPendingChunk() {
+    return this.#pendingQueue[this.#pendingQueue.length - 1];
   };
 
   get _gainNode() {
@@ -401,14 +405,16 @@ export default class Player {
 
 
 /* schedule chunk for playback and assign values to returned chunk object */
-  _queue_scheduleChunk(chunk = {}, startTime = 0) {
+  _queue_scheduleChunk(chunk = {}, startTimeSample = 0) {
+    const playbackSeconds = (chunk.srcLengthSamples / this.#sampleRate) / chunk.ctxPlaybackSpeed;
+    chunk.ctxLengthSamples = Math.floor(playbackSeconds * this.#sampleRate);
+    chunk.ctxPlaybackSpeed = chunk.srcLengthSamples / chunk.ctxLengthSamples;
+    chunk.ctxStartTime = startTimeSample / this.#sampleRate
+    chunk.ctxNextStartTimeSample = Math.floor(startTimeSample + chunk.ctxLengthSamples);
+    chunk.ctxNextStartTime = chunk.ctxNextStartTimeSample / this.#sampleRate;
+    chunk.node = this.#ctx.createBufferSource();
     chunk.node.buffer = chunk.buffer;
     chunk.node.playbackRate.value = chunk.ctxPlaybackSpeed;
-    chunk.ctxStartTime = this._clampClock(startTime);
-    chunk.ctxLengthSeconds = (
-      (chunk.srcLengthSamples / this.#sampleRate) / chunk.node.playbackRate.value
-    );
-    chunk.ctxNextStartTime = chunk.ctxStartTime + chunk.ctxLengthSeconds;
     chunk.node.connect(this.#bufferGain);
     chunk.node.start(chunk.ctxStartTime, 0);
     return chunk;
@@ -424,19 +430,19 @@ export default class Player {
 /* schedule chunks and shift from pending to scheduled */
   _queue_schedulePendingChunks(ctxTime) {
     if (!this.#pendingQueue.length) return null;
-    const scheduledChunksFillTarget = ctxTime + this.#scheduledSeconds;
+    const scheduledChunksFillTarget = (ctxTime + this.#scheduledSeconds) * this.#sampleRate;
     let lastScheduledChunk = this._lastScheduledChunk;
     let lastCtxGain = lastScheduledChunk?.ctxGain ?? 0;
-    let nextStartTime = lastScheduledChunk?.ctxNextStartTime ?? (ctxTime + this.#uiLatency);
-    while (nextStartTime < scheduledChunksFillTarget) {
+    let nextStartTimeSample = lastScheduledChunk?.ctxNextStartTimeSample ?? Math.round(this._clampClock(ctxTime + this.#uiLatency) * this.#sampleRate);
+    while (nextStartTimeSample < scheduledChunksFillTarget) {
       const nextChunk = this.#pendingQueue.shift();
       if (!nextChunk) break;
-      lastScheduledChunk = this._queue_scheduleChunk(nextChunk, nextStartTime);
+      lastScheduledChunk = this._queue_scheduleChunk(nextChunk, nextStartTimeSample);
       this.#scheduledQueue.push(lastScheduledChunk);
       if (lastCtxGain !== lastScheduledChunk.ctxGain) {
         this._queue_scheduleGain(lastScheduledChunk.ctxNextStartTime, lastScheduledChunk.ctxGain);
       };
-      nextStartTime = lastScheduledChunk.ctxNextStartTime;
+      nextStartTimeSample = lastScheduledChunk.ctxNextStartTimeSample;
       lastCtxGain = lastScheduledChunk.ctxGain;
     };
   };
@@ -445,7 +451,7 @@ export default class Player {
 /* repopulate pending queue with new chunks */
   async _queue_refillPendingChunks() {
     const lastScheduledEndSample = this._lastScheduledChunk?.srcEndSample;
-    const lastPendingChunk = this.#pendingQueue[this.#pendingQueue.length - 1];
+    const lastPendingChunk = this._lastPendingChunk;
     if (!lastScheduledEndSample || !lastPendingChunk) return null;
     const direction = lastPendingChunk.direction;
     const pendingChunksFillTarget = lastScheduledEndSample + (direction * this.#pendingSeconds * this.#sampleRate);
@@ -482,17 +488,18 @@ export default class Player {
       if (!clamped) return null;
       const buffer = await this._chunk_getBuffer(clamped.start, clamped.end);
       return {
-        node: this.#ctx.createBufferSource(),
+        node: null,
         buffer: buffer,
         direction: (clamped.start < clamped.end) ? 1 : -1,
         srcStartSeconds: clamped.start / this.#sampleRate,
         srcStartSample: clamped.start,
         srcEndSample: clamped.end,
-        srcLengthSamples: clamped.srcLengthSamples,
+        srcLengthSamples: buffer.length,
         ctxPlaybackSpeed: speed,
         ctxStartTime: null,
         ctxNextStartTime: null,
-        ctxLengthSeconds: null,
+        ctxNextStartTimeSample: null,
+        ctxLengthSamples: null,
         ctxGain: gain,
       };
     } catch (err) {
@@ -511,7 +518,6 @@ export default class Player {
     return {
       start,
       end,
-      srcLengthSamples,
     };
   };
 

@@ -57,6 +57,15 @@ export default class AudioTape {
 
 
 /* ------------------------------------------------------------------ */
+/* Private Getters */
+
+  get _gainNode() {
+    return this.#Player._gainNode;
+  };
+
+
+
+/* ------------------------------------------------------------------ */
 /* Constructor */
 
   constructor({

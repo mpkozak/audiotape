@@ -65,9 +65,9 @@ Before any audio can be rendered to the output, the `AudioTape` instance must fi
 
 ```js
 function activateTape(e) {
-	e.preventDefault();
-	tape.activate();
-	window.removeEventListener('click', activateTape);
+  e.preventDefault();
+  tape.activate();
+  window.removeEventListener('click', activateTape);
 };
 window.addEventListener('click', activateTape);
 ```
@@ -295,6 +295,6 @@ When set to `true`, limits the amount of decoded PCM data retained in memory at 
 ## Example
 The following example was built using React:
 
-[Live demo](https://kozak.digital/audiotape/)
+[Basic demo](https://kozak.digital/audiotape/) ([Github](https://github.com/mpkozak/audiotape_demo))
 
-[Github](https://github.com/mpkozak/audiotape_demo)
+[Advanced demo](https://kozak.digital/rls/)
